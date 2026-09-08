@@ -1,0 +1,19 @@
+# Python cache
+**/__pycache__/
+**/*.py[cod]
+
+# Virtual environments
+**/.venv/
+**/venv/
+**/env/
+
+# Environment files
+**/.env
+**/.env.*
+
+# Python caches/tools
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+**/out*/

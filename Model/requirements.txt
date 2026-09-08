@@ -1,0 +1,18 @@
+# Core inference service dependencies
+# Install with: pip install -r requirements.txt --break-system-packages   (Linux/Mac may not need the flag)
+
+requests>=2.31          # fetch_s1.py: CDSE auth + download
+numpy>=1.24
+rasterio>=1.3           # reading/writing GeoTIFFs, windowed strip I/O
+torch>=2.0              # model inference (classifier + segmentor)
+scipy>=1.10             # cfar_filter.py: uniform_filter, connected-component labeling
+scikit-image>=0.21      # region_extraction.py: regionprops, contour extraction
+
+# -----------------------------------------------------------------
+# Optional -- only needed for specific features, not core detection
+# ------------pui-----------------------------------------------------
+# python-dotenv          # auto-loads .env for CDSE credentials (fetch_s1.py).
+#                         # Without it, just export CDSE_USERNAME/CDSE_PASSWORD manually.
+# fastapi                # only if running api_server.py as an HTTP service
+# uvicorn                # only if running api_server.py as an HTTP service
+# pydantic                # installed automatically as a fastapi dependency
