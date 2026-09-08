@@ -19,3 +19,4 @@
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+**/stage2_outputs/

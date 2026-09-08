@@ -1,0 +1,28 @@
+# Stage 2 -- Oil Spill Source/Time Backtracking
+# Install with: pip install -r requirements.txt
+#
+# On Windows, if `opendrift` or its scientific dependencies fail to build
+# via pip, conda-forge is usually much smoother:
+#   conda install -c conda-forge opendrift shapely pyproj xarray netCDF4 numpy pandas
+# then `pip install copernicusmarine cdsapi` inside that same environment.
+
+numpy>=1.24
+pandas>=2.0
+xarray>=2023.1
+netCDF4>=1.6
+
+shapely>=2.0
+pyproj>=3.5
+
+copernicusmarine>=2.0
+cdsapi>=0.7.7
+
+opendrift>=1.11
+
+# ---------------------------------------------------------------------------
+# Optional, NOT required for the V1 pipeline (auto GSHHG landmask is used
+# instead). Install these only if/when you do the later local-coastline
+# validation pass against the downloaded NOAA/NCEI GSHHG archive:
+#   geopandas>=0.14
+#   fiona>=1.9
+# ---------------------------------------------------------------------------
