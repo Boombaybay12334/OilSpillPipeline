@@ -112,9 +112,32 @@ def list_events():
     import fetch_s1
     return {
         "spill_events": {
-            k: v["description"] for k, v in fetch_s1.KNOWN_OIL_SPILL_EVENTS.items()
+            k: v["description"] for k, v in fetch_s1.get_known_events().items()
         },
         "control_scenes": {
-            k: v["description"] for k, v in fetch_s1.CONTROL_TEST_LOCATIONS.items()
+            k: v["description"] for k, v in fetch_s1.get_control_scenes().items()
         },
     }
+
+
+class AddEventModel(BaseModel):
+    key: str
+    bbox: List[float]
+    datetime_range: str
+    description: str
+    is_control: bool = False
+
+
+@app.post("/events")
+def add_event_endpoint(req: AddEventModel):
+    """
+    Registers a new spill event or control scene -- no file editing, no
+    restart. Takes effect on the very next /search or /detect call using
+    this key, since the registry is re-read from disk every time (see
+    fetch_s1._load_registry). Overwrites an existing entry with the same
+    key.
+    """
+    import fetch_s1
+    fetch_s1.add_event(req.key, req.bbox, req.datetime_range, req.description,
+                        is_control=req.is_control)
+    return {"status": "added", "key": req.key}

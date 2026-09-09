@@ -121,7 +121,7 @@ def compute_cfar_candidate_mask(vv_db: np.ndarray, valid_mask: np.ndarray,
 
 
 def candidate_tile_coords(candidate_mask: np.ndarray, tile_size: int, stride: int,
-                           min_candidate_pixels: int = 50, margin_px: int = 64):
+                           min_candidate_pixels: int = 10, margin_px: int = 64):
     """
     Converts a pixel-level CFAR candidate mask into a list of (top, left)
     512x512-grid tile coordinates worth sending to the classifier/segmentor,

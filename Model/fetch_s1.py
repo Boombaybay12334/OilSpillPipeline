@@ -71,54 +71,72 @@ DATETIME = "2018-01-10T00:00:00Z/2018-01-10T23:59:59Z"
 # guessed -- but Sentinel-1 revisit is ~6-12 days, so a given window may
 # still return 0-3 actual passes. Use --list to see what's really there
 # before picking one.
-KNOWN_OIL_SPILL_EVENTS = {
-    "sanchi_2018": {
-        "description": (
-            "MT Sanchi tanker collision (6 Jan 2018) and sinking (14 Jan 2018), "
-            "East China Sea. Confirmed oil/condensate slicks reported by China's "
-            "State Oceanic Administration and tracked via VIIRS/Sentinel-2 through "
-            "mid-to-late January 2018, centered near 28.37N 125.92E."
-        ),
-        "bbox": [124.5, 27.5, 127.0, 29.0],
-        "datetime": "2018-01-14T00:00:00Z/2018-01-25T23:59:59Z",
-    },
-}
+import json as _json
 
 # =========================
-#  CONTROL SCENES (for isolating pipeline bugs from real geography)
+#  EVENTS REGISTRY (external JSON file, not hardcoded in this .py file)
 # =========================
-# NOT known oil spills -- deliberately open ocean, far from any coastline or
-# island, chosen to test whether a detection artifact is caused by our own
-# code (valid_mask/CFAR/region logic) versus by coastal/strait geometry
-# (wind-shadowed calm water near land is a real, documented "lookalike"
-# cause -- see the elongation-artifact investigation this scene was added
-# to resolve). Kept in a SEPARATE registry from KNOWN_OIL_SPILL_EVENTS on
-# purpose so a control scene can never be mistaken for a real spill target.
-CONTROL_TEST_LOCATIONS = {
-    "bay_of_biscay_control": {
-        "description": (
-            "Open-water control scene, central Bay of Biscay -- roughly "
-            "150-250km offshore from both the French and Spanish coasts, "
-            "no islands in the bbox. NOT a known spill location; this is a "
-            "clean baseline to check whether elongated false-positive "
-            "regions still occur far from any coastline. Chosen in this "
-            "region specifically because it's heavily monitored by "
-            "Sentinel-1 (same area as the 2002 Prestige spill), so real "
-            "archived passes are reliably available."
-        ),
-        "bbox": [-6.0, 44.5, -4.0, 46.0],
-        "datetime": "2018-01-01T00:00:00Z/2018-01-31T23:59:59Z",
-    },
-}
+# WHY THIS IS A FILE, NOT A PYTHON DICT: adding a new spill event or control
+# scene used to require editing this .py file, copying the new file over,
+# and restarting whatever process had it loaded (uvicorn doesn't pick up
+# code changes without --reload or a restart). Reading from a plain JSON
+# file INSTEAD, freshly on every call (no caching), means:
+#   - adding an event is editing events_registry.json (or calling
+#     add_event() / the API's POST /events), nothing else
+#   - a running `uvicorn api_server:app` process picks up new entries on
+#     the very next request, no restart required
+EVENTS_REGISTRY_PATH = os.environ.get(
+    "EVENTS_REGISTRY_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "events_registry.json"),
+)
+
+
+def _load_registry() -> dict:
+    """Reads the registry file fresh every call -- deliberately no caching,
+    so external edits (or add_event() calls) are visible immediately."""
+    if not os.path.exists(EVENTS_REGISTRY_PATH):
+        return {"spill_events": {}, "control_scenes": {}}
+    with open(EVENTS_REGISTRY_PATH, "r") as f:
+        data = _json.load(f)
+    data.setdefault("spill_events", {})
+    data.setdefault("control_scenes", {})
+    return data
+
+
+def get_known_events() -> dict:
+    """Current spill events, read fresh from the registry file."""
+    return _load_registry()["spill_events"]
+
+
+def get_control_scenes() -> dict:
+    """Current control scenes, read fresh from the registry file."""
+    return _load_registry()["control_scenes"]
+
+
+def add_event(key: str, bbox: list, datetime_range: str, description: str,
+              is_control: bool = False) -> None:
+    """
+    Registers a new spill event or control scene by writing it into
+    events_registry.json. Takes effect immediately for any already-running
+    server (next request re-reads the file) -- no restart, no code change.
+    Overwrites an existing entry with the same key.
+    """
+    data = _load_registry()
+    section = "control_scenes" if is_control else "spill_events"
+    data[section][key] = {"description": description, "bbox": bbox, "datetime": datetime_range}
+    with open(EVENTS_REGISTRY_PATH, "w") as f:
+        _json.dump(data, f, indent=2)
+    print(f"[Registry] Added '{key}' to {section} in {EVENTS_REGISTRY_PATH}")
 
 
 def _resolve_scene_config(key: str):
-    """Looks up `key` in either registry, spill events first."""
-    if key in KNOWN_OIL_SPILL_EVENTS:
-        return KNOWN_OIL_SPILL_EVENTS[key]
-    if key in CONTROL_TEST_LOCATIONS:
-        return CONTROL_TEST_LOCATIONS[key]
-    all_keys = list(KNOWN_OIL_SPILL_EVENTS.keys()) + list(CONTROL_TEST_LOCATIONS.keys())
+    """Looks up `key` in either registry section, spill events first."""
+    data = _load_registry()
+    if key in data["spill_events"]:
+        return data["spill_events"][key]
+    if key in data["control_scenes"]:
+        return data["control_scenes"][key]
+    all_keys = list(data["spill_events"].keys()) + list(data["control_scenes"].keys())
     raise KeyError(f"Unknown event/control key '{key}'. Known keys: {all_keys}")
 
 TOKEN_URL = (
@@ -462,7 +480,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--event", default=None,
                          help=f"Known event or control scene key, e.g. "
-                              f"{list(KNOWN_OIL_SPILL_EVENTS.keys()) + list(CONTROL_TEST_LOCATIONS.keys())}")
+                              f"{list(get_known_events().keys()) + list(get_control_scenes().keys())}")
     parser.add_argument("--list", action="store_true",
                          help="List available Sentinel-1 passes for --event and exit")
     parser.add_argument("--pick", type=int, default=0,
