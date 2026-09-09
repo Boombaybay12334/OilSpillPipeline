@@ -51,3 +51,9 @@ class InvestigationStore:
     def artifacts(self, event_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
             return [json.loads(row[0]) for row in db.execute("SELECT payload FROM artifacts WHERE event_id=? ORDER BY json_extract(payload, '$.display_priority') DESC", (event_id,))]
+
+    def delete_event(self, event_id: str) -> None:
+        with self._connect() as db:
+            db.execute("DELETE FROM progress WHERE event_id=?", (event_id,))
+            db.execute("DELETE FROM artifacts WHERE event_id=?", (event_id,))
+            db.execute("DELETE FROM investigations WHERE event_id=?", (event_id,))

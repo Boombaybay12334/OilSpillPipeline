@@ -46,3 +46,37 @@ def test_quickview_preserves_source(tmp_path: Path):
     results = QuickviewService(manager).generate(event["event_id"], "stage1")
     assert results and "warning" not in results[0]
     assert source.read_bytes() == before
+
+
+def test_sar_quickview_uses_db_composite_and_skips_thumbnail(tmp_path: Path):
+    manager = DataManager(tmp_path / "data")
+    event = manager.create_event("sar")
+    source = manager.safe_path(event["event_id"], "stage1/outputs/sigma0_vv_vh.tif")
+    thumb = manager.safe_path(event["event_id"], "stage1/outputs/scene_thumbnail.tif")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    profile = {"driver": "GTiff", "width": 10, "height": 10, "count": 2, "dtype": "float32", "crs": "EPSG:4326", "transform": from_origin(10, 20, 0.1, 0.1)}
+    with rasterio.open(source, "w", **profile) as dataset:
+        dataset.write(np.full((10, 10), 0.01, dtype="float32"), 1)
+        dataset.write(np.full((10, 10), 0.001, dtype="float32"), 2)
+    with rasterio.open(thumb, "w", **{**profile, "count": 1}) as dataset:
+        dataset.write(np.ones((10, 10), dtype="float32"), 1)
+    artifacts = ArtifactDiscoveryService(manager).discover(event["event_id"], "stage1")
+    assert not any("thumbnail" in item["relative_path"] for item in artifacts)
+    results = QuickviewService(manager).generate(event["event_id"], "stage1")
+    sar = next(item for item in results if item.get("source_relative_path", "").endswith("sigma0_vv_vh.tif"))
+    assert sar["renderer"] == "sar_linear_to_db_vv_vh_composite"
+    assert sar["stretch"]["display_min_db"] < 0
+    assert not any(item.get("source_relative_path", "").endswith("scene_thumbnail.tif") for item in results)
+
+
+def test_esa_quicklook_is_excluded_but_other_preview_is_kept(tmp_path: Path):
+    manager = DataManager(tmp_path / "data")
+    event = manager.create_event("esa-preview")
+    root = manager.safe_path(event["event_id"], "stage1/outputs/preview")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "quick-look.png").write_bytes(b"esa quick look")
+    (root / "product-preview.html").write_text("preview", encoding="utf-8")
+    artifacts = ArtifactDiscoveryService(manager).discover(event["event_id"], "stage1")
+    paths = {item["relative_path"] for item in artifacts}
+    assert "stage1/outputs/preview/quick-look.png" not in paths
+    assert "stage1/outputs/preview/product-preview.html" in paths

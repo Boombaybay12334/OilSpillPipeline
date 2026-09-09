@@ -81,6 +81,7 @@ try:
         if not path.exists():
             raise HTTPException(404, "Investigation not found")
         shutil.rmtree(path)
+        store.delete_event(event_id)
         return {"deleted": event_id}
 
     @app.post("/api/investigations/{event_id}/run")

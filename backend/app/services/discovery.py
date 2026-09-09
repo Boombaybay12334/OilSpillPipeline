@@ -19,8 +19,11 @@ class ArtifactDiscoveryService:
         if event_dir not in root.parents and root != event_dir:
             raise ValueError("Discovery path escapes event")
         existing = {a["relative_path"]: a for a in self.manager.read_manifest(event_id).get("artifacts", [])}
+        existing = {relative: artifact for relative, artifact in existing.items() if not self._is_ignored_presentation_file(Path(relative))}
         for path in root.rglob("*"):
             if not path.is_file() or path.name.endswith((".lock", ".part", ".tmp")):
+                continue
+            if self._is_ignored_presentation_file(path):
                 continue
             relative = path.relative_to(event_dir).as_posix()
             category, label, priority = self._classify(path)
@@ -32,6 +35,11 @@ class ArtifactDiscoveryService:
         manifest["artifacts"] = artifacts
         self.manager.write_manifest(event_id, manifest)
         return artifacts
+
+    @staticmethod
+    def _is_ignored_presentation_file(path: Path) -> bool:
+        name = path.name.lower()
+        return "thumbnail" in name or "thumb" in name or name in {"quick-look.png", "logo.png"}
 
     @staticmethod
     def _classify(path: Path) -> tuple[str, str, int]:

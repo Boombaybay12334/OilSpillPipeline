@@ -91,11 +91,15 @@ function summaryMarkup(stage, summary) {
 }
 
 function artifactsMarkup(stage) {
-  const artifacts = (currentEvent.manifest.artifacts || []).filter(artifact => artifact.stage === stage);
+  const artifacts = (currentEvent.manifest.artifacts || []).filter(artifact => artifact.stage === stage && !isIgnoredPresentationPath(artifact.relative_path));
   const images = artifacts.filter(artifact => artifact.category === 'raster_quickview' || artifact.category === 'image');
   const gallery = images.length ? `<div class="quickview-gallery">${images.map(artifact => `<figure><img src="${API}/investigations/${current}/artifacts/${artifact.artifact_id}" alt="${escapeHtml(artifact.label)}"><figcaption>${escapeHtml(artifact.label)}</figcaption></figure>`).join('')}</div>` : '';
   const list = artifacts.length ? artifacts.map(artifact => `<div class="artifact"><div><strong>${escapeHtml(artifact.label)}</strong><span>${escapeHtml(artifact.relative_path)}</span></div><a href="${API}/investigations/${current}/artifacts/${artifact.artifact_id}" target="_blank">Open</a></div>`).join('') : '<p class="muted">No artifacts imported yet.</p>';
   return `${gallery}<div class="artifact-list">${list}</div>`;
+}
+
+function isIgnoredPresentationPath(path) {
+  return /(^|[\\/])(thumbnail|thumb)[^\\/]*\./i.test(path) || /(^|[\\/])(?:thumbnail|thumb)(?:[\\/]|$)/i.test(path) || /(^|[\\/])(?:quick-look|logo)\.png$/i.test(path);
 }
 
 async function renderStage(stage) {
@@ -109,7 +113,7 @@ async function renderStage(stage) {
 
 function renderConfig() {
   const event = currentEvent;
-  $('workspace').innerHTML = `${navigationMarkup('config')}${stageHeader('config', 'Prepare a saved investigation without mixing configuration with scientific results.')}<section class="panel config-card"><h3>Current investigation</h3><div class="config-grid"><div><b>Name</b><span>${escapeHtml(event.name)}</span></div><div><b>Event ID</b><span>${escapeHtml(event.event_id)}</span></div><div><b>Mode</b><span>${escapeHtml(event.mode)}</span></div><div><b>Data location</b><span>data/investigations/${escapeHtml(event.event_id)}</span></div></div></section><section class="panel"><h3>Expected input locations</h3><div class="config-path"><b>Stage 1</b><code>Model\\out</code></div><div class="config-path"><b>Stage 2</b><code>BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw</code></div><div class="config-path"><b>Stage 3</b><code>BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw\\ais_attribution_output</code></div></section><section class="panel"><h3>Pipeline order</h3><div class="order-line"><span>01</span>Detection and raster quickviews <b>→</b><span>02</span>Backtracking handoff <b>→</b><span>03</span>Vessel ranking</div></section>`;
+  $('workspace').innerHTML = `${navigationMarkup('config')}${stageHeader('config', 'Prepare a saved investigation without mixing configuration with scientific results.')}<section class="panel config-card"><h3>Current investigation</h3><div class="config-grid"><div><b>Name</b><span>${escapeHtml(event.name)}</span></div><div><b>Event ID</b><span>${escapeHtml(event.event_id)}</span></div><div><b>Mode</b><span>${escapeHtml(event.mode)}</span></div><div><b>Data location</b><span>data/investigations/${escapeHtml(event.event_id)}</span></div></div></section><section class="panel"><h3>Expected input locations</h3><div class="config-path"><b>Stage 1</b><code>Model\\out</code></div><div class="config-path"><b>Stage 2</b><code>BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw</code></div><div class="config-path"><b>Stage 3</b><code>BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw\\ais_attribution_output</code></div></section><section class="panel"><h3>Pipeline order</h3><div class="order-line"><span>01</span>Detection and raster quickviews <b>→</b><span>02</span>Backtracking handoff <b>→</b><span>03</span>Vessel ranking</div></section><section class="panel danger-panel"><h3>Delete investigation</h3><p class="muted">Removes this event's copied files, quickviews, manifest, and saved database records. Original source folders are not touched.</p><button id="delete-investigation" class="danger-button">Delete this investigation</button></section>`;
 }
 
 function renderPage(page) {
@@ -126,7 +130,17 @@ document.addEventListener('click', event => {
   const target = event.target.closest('[data-page]');
   if (target) navigate(target.dataset.page);
   if (event.target.closest('#generate-quickviews')) generateQuickviews();
+  if (event.target.closest('#delete-investigation')) deleteInvestigation();
 });
+
+async function deleteInvestigation() {
+  if (!current || !window.confirm('Delete this investigation and its copied artifacts? Original source folders will not be touched.')) return;
+  await request(`/investigations/${current}`, { method: 'DELETE' });
+  current = undefined;
+  currentEvent = undefined;
+  await refreshEvents();
+  $('workspace').innerHTML = '<div class="empty"><span class="mark">OS</span><h2>Investigation deleted</h2><p>Select another investigation or create a new one.</p></div>';
+}
 window.addEventListener('hashchange', () => renderPage(getPage()));
 window.navigate = navigate;
 window.importStage = importStage;
