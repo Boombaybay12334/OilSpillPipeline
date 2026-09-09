@@ -171,6 +171,11 @@ try:
         artifacts = manager.read_manifest(event_id).get("artifacts", [])
         return {"summary": build_stage_summary(manager, event_id, stage, artifacts), "artifacts": [a for a in artifacts if a["stage"] == stage], "progress": [p for p in store.progress(event_id) if p["stage"] == stage]}
 
+    frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
+    if frontend_dir.exists():
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+
 except ImportError:
     app = None
 

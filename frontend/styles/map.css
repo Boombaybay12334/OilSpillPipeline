@@ -1,0 +1,222 @@
+/* ==========================================================================
+   OIL SPILL INTELLIGENCE PLATFORM — GEOSPATIAL MAP STYLES
+   ========================================================================== */
+
+.map-viewport {
+  width: 100%;
+  height: 600px;
+  min-height: 480px;
+  position: relative;
+  background: var(--bg-void);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.map-viewport.map-fullscreen {
+  height: calc(100vh - var(--header-height) - var(--nav-height) - 100px);
+}
+
+#leaflet-map {
+  width: 100%;
+  height: 100%;
+  background: #060a0e;
+}
+
+/* --------------------------------------------------------------------------
+   Leaflet Theme Overrides (Dark Instrumentation)
+   -------------------------------------------------------------------------- */
+.leaflet-container {
+  background-color: #05090d !important;
+  font-family: var(--font-sans) !important;
+}
+
+.leaflet-bar {
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: var(--shadow-surface) !important;
+  border-radius: var(--radius-sm) !important;
+  overflow: hidden;
+}
+
+.leaflet-bar a {
+  background-color: var(--bg-surface) !important;
+  border-bottom: 1px solid var(--border-hairline) !important;
+  color: var(--text-primary) !important;
+  transition: all var(--transition-fast);
+}
+
+.leaflet-bar a:hover {
+  background-color: var(--bg-surface-elevated) !important;
+  color: var(--cyan-accent) !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(7, 13, 18, 0.8) !important;
+  color: var(--text-muted) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.65rem !important;
+  border-top: 1px solid var(--border-hairline);
+  padding: 2px 6px !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--text-secondary) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Custom Map Overlays & Toolbars
+   -------------------------------------------------------------------------- */
+.map-layer-control {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  background: var(--bg-surface-glass);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-shadow: var(--shadow-surface);
+  min-width: 180px;
+}
+
+.map-layer-control h4 {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 2px;
+}
+
+.layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.layer-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--cyan-accent);
+  cursor: pointer;
+}
+
+.layer-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Coordinate Telemetry Bar */
+.map-coords-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  background: rgba(7, 13, 18, 0.9);
+  border-top: 1px solid var(--border-hairline);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.map-coords-val {
+  color: var(--cyan-accent);
+}
+
+/* --------------------------------------------------------------------------
+   Custom Popups
+   -------------------------------------------------------------------------- */
+.leaflet-popup-content-wrapper {
+  background: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-medium) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: var(--shadow-modal) !important;
+  padding: 0 !important;
+}
+
+.leaflet-popup-content {
+  margin: 0 !important;
+  padding: var(--space-3) var(--space-4) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 0.8rem !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-popup-tip {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-medium) !important;
+}
+
+.map-popup-header {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--cyan-accent);
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border-hairline);
+  padding-bottom: 4px;
+}
+
+.map-popup-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 12px;
+  font-size: 0.75rem;
+}
+
+.map-popup-grid span:first-child {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.map-popup-grid span:last-child {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   Custom Markers
+   -------------------------------------------------------------------------- */
+.vessel-marker-icon {
+  background: transparent;
+  border: none;
+}
+
+.vessel-pin {
+  width: 22px;
+  height: 22px;
+  background: var(--bg-surface);
+  border: 2px solid var(--cyan-accent);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 10px rgba(0, 229, 201, 0.4);
+  color: var(--cyan-accent);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  transition: transform var(--transition-fast);
+}
+
+.vessel-pin:hover, .vessel-pin.selected {
+  transform: scale(1.35);
+  background: var(--cyan-accent);
+  color: var(--bg-void);
+  box-shadow: 0 0 16px var(--cyan-accent);
+}

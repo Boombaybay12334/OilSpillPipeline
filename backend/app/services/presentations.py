@@ -35,8 +35,18 @@ def build_stage_summary(manager: DataManager, event_id: str, stage: str, artifac
                 continue
             metadata = data.get("metadata") or data.get("scene_metadata") or {}
             features = data.get("features") or data.get("regions") or []
-            if metadata or features:
-                return {"stage": stage, "kind": "detection", "metadata": metadata, "region_count": len(features), "regions": features[:20], "artifact_ids": [artifact["artifact_id"]]}
+            detection_summary = data.get("detection_summary") or {}
+            if metadata or features or detection_summary:
+                region_count = len(features) if features else detection_summary.get("n_regions", 0)
+                return {
+                    "stage": stage,
+                    "kind": "detection",
+                    "metadata": metadata,
+                    "detection_summary": detection_summary,
+                    "region_count": region_count,
+                    "regions": features[:50],
+                    "artifact_ids": [artifact["artifact_id"]],
+                }
     if stage == "stage2":
         for artifact, data in values:
             if not isinstance(data, dict) or not ({"observation", "backtracking", "origin_hypotheses"} & set(data)):
@@ -44,12 +54,32 @@ def build_stage_summary(manager: DataManager, event_id: str, stage: str, artifac
             observation, backtracking = data.get("observation", {}), data.get("backtracking", {})
             hypotheses = data.get("origin_hypotheses", [])
             top_cells = [{**cell, "time_utc": hypothesis.get("time_utc")} for hypothesis in hypotheses for cell in hypothesis.get("top_cells", [])[:10]]
-            return {"stage": stage, "kind": "backtracking", "observation": observation, "backtracking": backtracking, "simulation_window": {"start": backtracking.get("simulation_start_utc"), "end": backtracking.get("simulation_end_utc")}, "hypothesis_count": len(hypotheses), "top_cells": top_cells[:30], "limitations": data.get("limitations", []), "handoff_artifact_id": artifact["artifact_id"]}
+            return {
+                "stage": stage,
+                "kind": "backtracking",
+                "observation": observation,
+                "backtracking": backtracking,
+                "simulation_window": {"start": backtracking.get("simulation_start_utc"), "end": backtracking.get("simulation_end_utc")},
+                "hypothesis_count": len(hypotheses),
+                "origin_hypotheses": hypotheses,
+                "top_cells": top_cells[:50],
+                "limitations": data.get("limitations", []),
+                "handoff_artifact_id": artifact["artifact_id"],
+            }
     if stage == "stage3":
         for artifact, data in values:
             if not isinstance(data, dict):
                 continue
             candidates = data.get("ranked_candidates") or data.get("candidates") or data.get("ships") or data.get("vessels")
             if isinstance(candidates, list):
-                return {"stage": stage, "kind": "vessel_ranking", "candidates": candidates[:20], "artifact_id": artifact["artifact_id"], "disclaimer": "Investigative candidates only. A ranking reflects compatibility with modeled source probability and available AIS evidence; it is not proof of responsibility."}
+                return {
+                    "stage": stage,
+                    "kind": "vessel_ranking",
+                    "candidates": candidates[:50],
+                    "query": data.get("query", {}),
+                    "count": data.get("count", len(candidates)),
+                    "description": data.get("description", "Top ranked vessel candidates for display."),
+                    "artifact_id": artifact["artifact_id"],
+                    "disclaimer": "Investigative candidates only. A ranking reflects compatibility with modeled source probability and available AIS evidence; it is not proof of responsibility.",
+                }
     return {"stage": stage, "kind": "empty", "message": "No recognized presentation handoff is available yet.", "artifact_ids": [a["artifact_id"] for a in artifacts if a["stage"] == stage]}

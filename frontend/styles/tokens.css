@@ -1,0 +1,114 @@
+/* ==========================================================================
+   OIL SPILL INTELLIGENCE PLATFORM — DESIGN SYSTEM TOKENS
+   Visual Language: DARK + EDITORIAL + TECHNICAL + MINIMAL + OCEANIC + CINEMATIC
+   ========================================================================== */
+
+:root {
+  /* --------------------------------------------------------------------------
+     Color System: Deep Abyssal & Oceanic Surfaces
+     -------------------------------------------------------------------------- */
+  --bg-void: #04070a;
+  --bg-abyss: #070d12;
+  --bg-surface: #0d161d;
+  --bg-surface-elevated: #132029;
+  --bg-surface-active: #192a36;
+  --bg-surface-glass: rgba(13, 22, 29, 0.88);
+  --bg-overlay: rgba(4, 7, 10, 0.75);
+
+  /* --------------------------------------------------------------------------
+     Borders & Technical Grid Lines
+     -------------------------------------------------------------------------- */
+  --border-hairline: rgba(120, 190, 210, 0.08);
+  --border-subtle: rgba(120, 190, 210, 0.15);
+  --border-medium: rgba(120, 190, 210, 0.28);
+  --border-accent: rgba(0, 229, 201, 0.5);
+  --border-active: #00e5c9;
+
+  /* --------------------------------------------------------------------------
+     Typography Palette
+     -------------------------------------------------------------------------- */
+  --text-primary: #e6eff3;
+  --text-secondary: #9cb5c2;
+  --text-muted: #5e7987;
+  --text-dim: #3d525e;
+  --text-inverse: #070d12;
+
+  /* --------------------------------------------------------------------------
+     Accents & Semantic Intelligence Indicators
+     -------------------------------------------------------------------------- */
+  --cyan-accent: #00e5c9;
+  --cyan-subtle: rgba(0, 229, 201, 0.12);
+  --cyan-glow: 0 0 14px rgba(0, 229, 201, 0.25);
+
+  --ocean-blue: #0284c7;
+  --ocean-blue-subtle: rgba(2, 132, 199, 0.14);
+
+  --amber-warn: #f59e0b;
+  --amber-bg: rgba(245, 158, 11, 0.12);
+  --amber-border: rgba(245, 158, 11, 0.35);
+
+  --coral-alert: #f43f5e;
+  --coral-bg: rgba(244, 63, 94, 0.14);
+  --coral-border: rgba(244, 63, 94, 0.35);
+
+  --green-ready: #10b981;
+  --green-bg: rgba(16, 185, 129, 0.12);
+  --green-border: rgba(16, 185, 129, 0.35);
+
+  --purple-hypo: #a855f7;
+  --purple-bg: rgba(168, 85, 247, 0.12);
+
+  /* --------------------------------------------------------------------------
+     Typography Families
+     -------------------------------------------------------------------------- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', 'SF Mono', 'Courier New', monospace;
+  --font-editorial: 'Newsreader', 'Georgia', serif;
+
+  /* --------------------------------------------------------------------------
+     Layout & Spacing Units
+     -------------------------------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --header-height: 60px;
+  --nav-height: 48px;
+  --sidebar-width: 320px;
+
+  /* --------------------------------------------------------------------------
+     Radii (Crisp, Technical, Never Puffy)
+     -------------------------------------------------------------------------- */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+
+  /* --------------------------------------------------------------------------
+     Shadows & Elevation
+     -------------------------------------------------------------------------- */
+  --shadow-surface: 0 4px 20px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.7);
+
+  /* --------------------------------------------------------------------------
+     Transitions
+     -------------------------------------------------------------------------- */
+  --transition-fast: 140ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* --------------------------------------------------------------------------
+     Z-Indexes
+     -------------------------------------------------------------------------- */
+  --z-base: 1;
+  --z-nav: 100;
+  --z-header: 200;
+  --z-modal-backdrop: 500;
+  --z-modal: 600;
+  --z-tooltip: 1000;
+}
