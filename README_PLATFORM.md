@@ -14,6 +14,8 @@ uvicorn app.main:app --app-dir backend --reload --port 8000
 
 Open `frontend\index.html` in a browser. The backend is the source of truth; the frontend uses only its local API. For a same-origin deployment, serve `frontend` with any local static server and set `window.OIL_PIPELINE_API` to `/api`.
 
+The frontend is organized as four pages for each selected investigation: **Detection** (`#/stage1`), **Backtracking** (`#/stage2`), **Vessel Ranking** (`#/stage3`), and **Configuration** (`#/config`). The three stage pages keep their own summaries, quickviews, handoffs, and downloads while sharing the same event and manifest. Configuration shows the expected source folders and the event's managed data location; it does not mix setup controls into scientific results.
+
 ## Supported workflows
 
 Create an event with `POST /api/investigations`, then import an existing stage output directory by posting `{"existing_output_dir":"C:\\path\\to\\outputs","mode":"replay"}` to the stage run endpoint. Discovery is recursive and idempotent. TIFF/GeoTIFF sources are retained and quickviews are derived under the event's stage `quickviews` folder when rasterio and Pillow are installed.
