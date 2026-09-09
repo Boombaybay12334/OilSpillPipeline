@@ -1,7 +1,12 @@
-import os
+#!/usr/bin/env python3
+
+import argparse
 import json
 import math
+import os
+import sys
 import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -9,288 +14,188 @@ import requests
 from dotenv import load_dotenv
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
-load_dotenv()
-
-GFW_API_TOKEN = os.getenv("GFW_API_TOKEN", "").strip()
-
-INPUT_HANDOFF_PATH = os.getenv(
-    "INPUT_HANDOFF_PATH",
-    "./sanchi_2018_stage2_handoff.json"
-)
-
-INPUT_OBSERVATION_SUMMARY_PATH = os.getenv(
-    "INPUT_OBSERVATION_SUMMARY_PATH",
-    "./sanchi_2018_observation_summary.json"
-)
-
-OUTPUT_DIR = os.getenv(
-    "OUTPUT_DIR",
-    "./ais_attribution_output"
-)
-
-SPATIAL_PADDING_DEG = float(
-    os.getenv("SPATIAL_PADDING_DEG", "2.0")
-)
-
-TIME_PADDING_HOURS = float(
-    os.getenv("TIME_PADDING_HOURS", "12")
-)
-
-GFW_SPATIAL_RESOLUTION = os.getenv(
-    "GFW_SPATIAL_RESOLUTION",
-    "HIGH"
-)
-
-GFW_TEMPORAL_RESOLUTION = os.getenv(
-    "GFW_TEMPORAL_RESOLUTION",
-    "HOURLY"
-)
-
-GFW_GROUP_BY = os.getenv(
-    "GFW_GROUP_BY",
-    "MMSI"
-)
-
-MATCH_SIGMA_KM = float(
-    os.getenv("MATCH_SIGMA_KM", "15")
-)
-
-MIN_MATCH_SCORE = float(
-    os.getenv("MIN_MATCH_SCORE", "0.0")
-)
-
-TOP_MATCHES_PER_VESSEL = int(
-    os.getenv("TOP_MATCHES_PER_VESSEL", "10")
-)
-
-HTTP_TIMEOUT_SECONDS = int(
-    os.getenv("HTTP_TIMEOUT_SECONDS", "120")
-)
-
-HTTP_RETRIES = int(
-    os.getenv("HTTP_RETRIES", "3")
-)
-
-REPORT_POLL_SECONDS = int(
-    os.getenv("REPORT_POLL_SECONDS", "10")
-)
-
-REPORT_MAX_WAIT_MINUTES = int(
-    os.getenv("REPORT_MAX_WAIT_MINUTES", "15")
-)
-
-# Number of top MMSIs whose identities we resolve through
-# the GFW Vessel API.
-VESSEL_IDENTITY_TOP_N = int(
-    os.getenv("VESSEL_IDENTITY_TOP_N", "100")
-)
-
-# Soft speed threshold used only as a trajectory-consistency
-# penalty. We do NOT hard-filter vessels because vessel types
-# and AIS gaps vary.
-SPEED_SOFT_LIMIT_KNOTS = float(
-    os.getenv("SPEED_SOFT_LIMIT_KNOTS", "45")
-)
-
-# Minimum probability represented by the top source cells
-# before treating a probability field as sufficiently informative.
-MIN_SOURCE_PROBABILITY_MASS = float(
-    os.getenv("MIN_SOURCE_PROBABILITY_MASS", "0.01")
-)
-
-
 GFW_REPORT_URL = (
     "https://gateway.api.globalfishingwatch.org/v3/4wings/report"
 )
 
 GFW_LAST_REPORT_URL = (
-    "https://gateway.api.globalfishingwatch.org/v3/4wings/report/last-report"
-)
-
-GFW_VESSEL_SEARCH_URL = (
-    "https://gateway.api.globalfishingwatch.org/v3/vessels/search"
-)
-
-GFW_VESSEL_DATASET = (
-    "public-global-vessel-identity:latest"
+    "https://gateway.api.globalfishingwatch.org/v3/4wings/last-report"
 )
 
 
 # ============================================================
-# BASIC HELPERS
+# DATETIME HELPERS
 # ============================================================
 
 def utc_now():
     return datetime.now(timezone.utc)
 
 
-def parse_datetime(value):
-    if value is None:
+def parse_dt(value):
+    if not value:
         return None
 
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+    value = str(value).strip()
 
-    text = str(value).strip()
+    # GFW uses values such as:
+    # 2018-01-23T04:00:00Z
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
 
-    if not text:
-        return None
+    dt = datetime.fromisoformat(value)
 
-    # ISO UTC
-    try:
-        dt = datetime.fromisoformat(
-            text.replace("Z", "+00:00")
-        )
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
 
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        return dt.astimezone(timezone.utc)
-
-    except Exception:
-        pass
-
-    # GFW hourly date format:
-    # 2018-01-25 10:00
-    for fmt in (
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M",
-        "%Y-%m-%dT%H:%M:%S",
-    ):
-        try:
-            return datetime.strptime(
-                text,
-                fmt
-            ).replace(tzinfo=timezone.utc)
-        except Exception:
-            continue
-
-    return None
+    return dt.astimezone(timezone.utc)
 
 
-def iso_utc(dt):
-    if dt is None:
-        return None
-
-    return dt.astimezone(timezone.utc).replace(
-        microsecond=0
-    ).isoformat().replace("+00:00", "Z")
-
-
-def haversine_km(lat1, lon1, lat2, lon2):
-    """
-    Great-circle distance between two WGS84 points.
-    """
-
-    r = 6371.0088
-
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
-
-    a = (
-        math.sin(dp / 2) ** 2
-        + math.cos(p1)
-        * math.cos(p2)
-        * math.sin(dl / 2) ** 2
-    )
-
-    return 2 * r * math.asin(
-        min(1.0, math.sqrt(a))
+def iso_z(dt):
+    return (
+        dt.astimezone(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
     )
 
 
-def gaussian(distance_km, sigma_km):
-    if sigma_km <= 0:
-        return 0.0
-
-    return math.exp(
-        -0.5 * (distance_km / sigma_km) ** 2
-    )
-
+# ============================================================
+# SAFE CONVERSION
+# ============================================================
 
 def safe_float(value):
     try:
+        if value is None or value == "":
+            return None
+
         return float(value)
+
     except Exception:
         return None
 
 
 def safe_int(value):
     try:
-        return int(value)
+        if value is None or value == "":
+            return None
+
+        return int(float(value))
+
     except Exception:
         return None
 
 
 # ============================================================
-# LOAD INPUTS
+# DISTANCE
 # ============================================================
 
-def load_json(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def haversine_km(lat1, lon1, lat2, lon2):
+    """
+    Great-circle distance between two coordinates in km.
+    """
 
+    earth_radius_km = 6371.0088
 
-def get_event_id(handoff):
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(dlat / 2.0) ** 2
+        + math.cos(lat1_rad)
+        * math.cos(lat2_rad)
+        * math.sin(dlon / 2.0) ** 2
+    )
+
     return (
-        handoff.get("event_id")
-        or handoff.get("observation", {}).get("catalog_id")
-        or "oil_spill_event"
+        2.0
+        * earth_radius_km
+        * math.asin(math.sqrt(a))
+    )
+
+
+def gaussian(distance_km, sigma_km):
+    """
+    Distance compatibility function.
+
+    distance = 0       -> 1
+    distance increases -> approaches 0
+    """
+
+    if sigma_km <= 0:
+        return 1.0 if distance_km == 0 else 0.0
+
+    return math.exp(
+        -0.5 * (distance_km / sigma_km) ** 2
     )
 
 
 # ============================================================
-# STAGE-2 SOURCE PROBABILITY FIELD
+# LOAD STAGE-2 HANDOFF
 # ============================================================
 
-def extract_source_probability_field(handoff):
-    """
-    Converts:
+def load_handoff(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-        origin_hypotheses:
-        [
-            {
-                time_utc,
-                hours_before_observation,
-                top_cells: [
-                    {
-                        lon_center,
-                        lat_center,
-                        probability,
-                        particle_count
-                    }
-                ]
-            }
-        ]
 
-    into a clean hourly probability field.
+def load_observation_summary(path):
+    if not path:
+        return None
+
+    path = Path(path)
+
+    if not path.exists():
+        return None
+
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ============================================================
+# SOURCE PROBABILITY FIELD
+# ============================================================
+
+def get_source_probability_field(handoff):
     """
+    Convert Stage-2 origin_hypotheses into:
+
+        {
+            UTC hour: [
+                {
+                    lat,
+                    lon,
+                    probability
+                }
+            ]
+        }
+
+    The Stage-2 field represents POSSIBLE source locations,
+    not a confirmed spill origin.
+    """
+
+    result = {}
 
     hypotheses = handoff.get(
         "origin_hypotheses",
         []
     )
 
-    result = []
-
     for hypothesis in hypotheses:
 
-        t = parse_datetime(
+        dt = parse_dt(
             hypothesis.get("time_utc")
         )
 
-        if t is None:
+        if dt is None:
             continue
+
+        hour = dt.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
 
         cells = []
 
@@ -311,10 +216,6 @@ def extract_source_probability_field(handoff):
                 cell.get("probability")
             )
 
-            particle_count = safe_int(
-                cell.get("particle_count")
-            )
-
             if (
                 lat is None
                 or lon is None
@@ -322,214 +223,290 @@ def extract_source_probability_field(handoff):
             ):
                 continue
 
-            cells.append({
-                "lat": lat,
-                "lon": lon,
-                "probability": max(
-                    0.0,
-                    probability
-                ),
-                "particle_count": particle_count,
-            })
+            cells.append(
+                {
+                    "lat": lat,
+                    "lon": lon,
+                    "probability": probability,
+                    "rank": cell.get("rank"),
+                    "particle_count": cell.get(
+                        "particle_count"
+                    ),
+                }
+            )
 
-        if not cells:
-            continue
-
-        probability_mass = sum(
-            c["probability"]
-            for c in cells
-        )
-
-        result.append({
-            "time_utc": t,
-            "hours_before_observation": hypothesis.get(
-                "hours_before_observation"
-            ),
-            "cells": cells,
-            "probability_mass": probability_mass,
-        })
-
-    result.sort(
-        key=lambda x: x["time_utc"]
-    )
+        if cells:
+            result[hour] = cells
 
     return result
 
 
 # ============================================================
-# AOI / TIME WINDOW
+# BBOX
 # ============================================================
 
-def build_aoi(handoff, observation_summary):
-    """
-    Prefer observation_summary.padded_bbox_wsen.
-
-    Fallback:
-        Stage-2 unpadded bbox + SPATIAL_PADDING_DEG
-    """
-
-    summary = observation_summary or {}
-
-    bbox = summary.get(
-        "padded_bbox_wsen"
+def bbox_from_handoff(handoff):
+    observation = handoff.get(
+        "observation",
+        {}
     )
 
-    if bbox and len(bbox) == 4:
-        return (
-            float(bbox[0]),
-            float(bbox[1]),
-            float(bbox[2]),
-            float(bbox[3]),
-            "observation_summary.padded_bbox_wsen"
-        )
-
-    bbox = (
-        handoff
-        .get("observation", {})
-        .get("unpadded_bbox_wsen")
+    bbox = observation.get(
+        "unpadded_bbox_wsen"
     )
 
     if not bbox or len(bbox) != 4:
-        raise RuntimeError(
-            "Could not find unpadded_bbox_wsen in Stage-2 handoff."
+        raise ValueError(
+            "Could not find "
+            "observation.unpadded_bbox_wsen "
+            "in Stage-2 handoff."
         )
 
-    west = float(bbox[0]) - SPATIAL_PADDING_DEG
-    south = float(bbox[1]) - SPATIAL_PADDING_DEG
-    east = float(bbox[2]) + SPATIAL_PADDING_DEG
-    north = float(bbox[3]) + SPATIAL_PADDING_DEG
+    west = float(bbox[0])
+    south = float(bbox[1])
+    east = float(bbox[2])
+    north = float(bbox[3])
 
     return (
         west,
         south,
         east,
         north,
-        "handoff.unpadded_bbox_wsen + padding"
     )
 
 
-def build_time_window(handoff, observation_summary):
+def get_aoi(
+    handoff,
+    observation_summary,
+    spatial_padding_deg,
+):
+
+    # Prefer the explicitly prepared padded AOI.
+    if observation_summary:
+
+        bbox = observation_summary.get(
+            "padded_bbox_wsen"
+        )
+
+        if bbox and len(bbox) == 4:
+
+            return (
+                tuple(
+                    map(float, bbox)
+                ),
+                "observation_summary.padded_bbox_wsen",
+            )
+
+    # Otherwise derive it ourselves.
+    west, south, east, north = (
+        bbox_from_handoff(handoff)
+    )
+
+    return (
+        (
+            west - spatial_padding_deg,
+            south - spatial_padding_deg,
+            east + spatial_padding_deg,
+            north + spatial_padding_deg,
+        ),
+        "observation.unpadded_bbox_wsen + "
+        "SPATIAL_PADDING_DEG",
+    )
+
+
+def bbox_geojson(
+    west,
+    south,
+    east,
+    north,
+):
     """
-    Prefer observation_summary.search_window_*.
+    GFW expects the geojson field to be an actual
+    GeoJSON object.
 
-    Fallback:
-        Stage-2 simulation_start/end +/- padding.
+    Do NOT json.dumps() this object.
     """
 
-    summary = observation_summary or {}
+    return {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [west, south],
+                [east, south],
+                [east, north],
+                [west, north],
+                [west, south],
+            ]
+        ],
+    }
 
-    start = parse_datetime(
-        summary.get(
+
+# ============================================================
+# TIME WINDOW
+# ============================================================
+
+def get_time_window(
+    handoff,
+    observation_summary,
+    time_padding_hours,
+):
+
+    if observation_summary:
+
+        start = observation_summary.get(
             "search_window_start_utc"
         )
-    )
 
-    end = parse_datetime(
-        summary.get(
+        end = observation_summary.get(
             "search_window_end_utc"
         )
-    )
 
-    if start and end:
-        return (
-            start,
-            end,
-            "observation_summary.search_window_*"
-        )
+        if start and end:
+
+            return (
+                parse_dt(start),
+                parse_dt(end),
+                "observation_summary.search_window_*",
+            )
 
     backtracking = handoff.get(
         "backtracking",
         {}
     )
 
-    sim_start = parse_datetime(
-        backtracking.get(
-            "simulation_start_utc"
-        )
+    sim_start = backtracking.get(
+        "simulation_start_utc"
     )
 
-    sim_end = parse_datetime(
-        backtracking.get(
-            "simulation_end_utc"
-        )
+    sim_end = backtracking.get(
+        "simulation_end_utc"
     )
 
     if not sim_start or not sim_end:
-        raise RuntimeError(
+        raise ValueError(
             "Could not determine AIS time window."
         )
 
-    padding = timedelta(
-        hours=TIME_PADDING_HOURS
+    start = (
+        parse_dt(sim_start)
+        - timedelta(
+            hours=time_padding_hours
+        )
+    )
+
+    end = (
+        parse_dt(sim_end)
+        + timedelta(
+            hours=time_padding_hours
+        )
     )
 
     return (
-        sim_start - padding,
-        sim_end + padding,
-        "Stage-2 simulation window + padding"
+        start,
+        end,
+        "backtracking.simulation_* + "
+        "TIME_PADDING_HOURS",
     )
 
 
 # ============================================================
-# GFW REPORT
+# GFW HEADERS
 # ============================================================
 
-def make_polygon(west, south, east, north):
+def gfw_headers(token):
     return {
-        "type": "Polygon",
-        "coordinates": [[
-            [west, south],
-            [east, south],
-            [east, north],
-            [west, north],
-            [west, south],
-        ]]
-    }
-
-
-def gfw_headers():
-    if not GFW_API_TOKEN:
-        raise RuntimeError(
-            "GFW_API_TOKEN is missing from .env"
-        )
-
-    return {
-        "Authorization": (
-            f"Bearer {GFW_API_TOKEN}"
-        ),
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
 
 
-def submit_gfw_report(
-    polygon,
-    start_dt,
-    end_dt
-):
-    """
-    Submit one 4Wings report.
+# ============================================================
+# GFW ERROR DISPLAY
+# ============================================================
 
-    IMPORTANT:
-    GFW v3 requires datasets[0] as a QUERY PARAMETER,
-    not inside the JSON request body.
-    """
+def print_gfw_error(response):
+
+    print(
+        f"[GFW] HTTP {response.status_code}"
+    )
+
+    try:
+
+        error_json = response.json()
+
+        print(
+            "[GFW] error response:"
+        )
+
+        print(
+            json.dumps(
+                error_json,
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+
+    except Exception:
+
+        print(
+            "[GFW] response body:"
+        )
+
+        print(
+            response.text[:10000]
+        )
+
+
+# ============================================================
+# SUBMIT GFW REPORT
+# ============================================================
+
+def submit_gfw_report(
+    token,
+    polygon,
+    start,
+    end,
+    spatial_resolution,
+    temporal_resolution,
+    group_by,
+    timeout,
+):
 
     params = {
-        "spatial-resolution": GFW_SPATIAL_RESOLUTION,
-        "format": "JSON",
-        "group-by": GFW_GROUP_BY,
-        "temporal-resolution": GFW_TEMPORAL_RESOLUTION,
-        "datasets[0]": "public-global-presence:latest",
-        "date-range": (
-            f"{iso_utc(start_dt)},"
-            f"{iso_utc(end_dt)}"
+        "spatial-resolution": (
+            spatial_resolution
         ),
-        "spatial-aggregation": "false",
+
+        "temporal-resolution": (
+            temporal_resolution
+        ),
+
+        "group-by": group_by,
+
+        "datasets[0]": (
+            "public-global-presence:latest"
+        ),
+
+        "date-range": (
+            f"{iso_z(start)},{iso_z(end)}"
+        ),
+
+        "format": "JSON",
     }
 
-    payload = {
-        "geojson": polygon,
+    # IMPORTANT:
+    #
+    # This MUST be a JSON object.
+    #
+    # WRONG:
+    # {"geojson": json.dumps(polygon)}
+    #
+    # CORRECT:
+    # {"geojson": polygon}
+
+    body = {
+        "geojson": polygon
     }
 
     print(
@@ -537,168 +514,354 @@ def submit_gfw_report(
     )
 
     print(
-        "[GFW] date range:",
-        params["date-range"]
+        f"[GFW] date range: "
+        f"{params['date-range']}"
     )
 
     print(
-        "[GFW] resolution:",
-        GFW_SPATIAL_RESOLUTION,
-        "/",
-        GFW_TEMPORAL_RESOLUTION
+        f"[GFW] resolution: "
+        f"{spatial_resolution} / "
+        f"{temporal_resolution}"
     )
 
     print(
-        "[GFW] group-by:",
-        GFW_GROUP_BY
+        f"[GFW] group-by: {group_by}"
     )
 
-    print(
-        "[GFW] dataset:",
-        params["datasets[0]"]
+    response = requests.post(
+        GFW_REPORT_URL,
+        params=params,
+        json=body,
+        headers=gfw_headers(token),
+        timeout=timeout,
     )
 
-    session = requests.Session()
+    if not response.ok:
 
-    for attempt in range(
-        1,
-        HTTP_RETRIES + 1
+        print_gfw_error(response)
+
+        response.raise_for_status()
+
+    try:
+        return response.json()
+
+    except Exception:
+
+        return {
+            "raw_response": response.text
+        }
+
+
+# ============================================================
+# REPORT ID
+# ============================================================
+
+def extract_report_identifier(data):
+
+    if not isinstance(data, dict):
+        return None
+
+    for key in (
+        "id",
+        "reportId",
+        "report_id",
+        "jobId",
+        "job_id",
     ):
 
-        try:
+        value = data.get(key)
 
-            response = session.post(
-                GFW_REPORT_URL,
-                headers=gfw_headers(),
-                params=params,
-                json=payload,
-                timeout=HTTP_TIMEOUT_SECONDS,
-            )
+        if value:
+            return str(value)
 
-            # Do not retry malformed requests.
-            if response.status_code == 422:
-                raise RuntimeError(
-                    "GFW returned HTTP 422:\n"
-                    + response.text[:5000]
-                )
+    return None
 
-            response.raise_for_status()
 
-            return response.json()
+# ============================================================
+# LAST REPORT
+# ============================================================
 
-        except RuntimeError:
-            raise
+def get_last_report(
+    token,
+    timeout,
+):
 
-        except Exception as exc:
-
-            if attempt >= HTTP_RETRIES:
-                raise
-
-            print(
-                f"[GFW] request failed "
-                f"(attempt {attempt}/{HTTP_RETRIES}): "
-                f"{exc}"
-            )
-
-            time.sleep(
-                2 ** (attempt - 1)
-            )
-
-    raise RuntimeError(
-        "Unable to submit GFW report."
+    response = requests.get(
+        GFW_LAST_REPORT_URL,
+        headers=gfw_headers(token),
+        timeout=timeout,
     )
 
-def poll_gfw_report(report_response):
-    """
-    Some GFW reports may return asynchronously.
+    if not response.ok:
 
-    If the submission already contains the final
-    entries payload, return it directly.
-    """
+        print_gfw_error(response)
+
+        response.raise_for_status()
+
+    return response.json()
+
+
+# ============================================================
+# WAIT FOR GFW REPORT
+# ============================================================
+
+def download_report_if_needed(
+    token,
+    report_response,
+    timeout,
+    poll_seconds,
+    max_wait_minutes,
+):
 
     if not isinstance(
         report_response,
-        dict
+        dict,
     ):
         return report_response
 
-    if "entries" in report_response:
+    # If the POST response already contains
+    # actual report rows, use it directly.
+    if (
+        "entries" in report_response
+        or "data" in report_response
+        or "results" in report_response
+        or "rows" in report_response
+    ):
         return report_response
 
-    report_id = (
-        report_response.get("id")
-        or report_response.get("reportId")
-        or report_response.get("report_id")
+    report_id = extract_report_identifier(
+        report_response
     )
 
     if not report_id:
         return report_response
 
     print(
-        "[GFW] report ID:",
-        report_id
+        f"[GFW] report id: {report_id}"
+    )
+
+    print(
+        "[GFW] waiting for report..."
     )
 
     deadline = (
         time.time()
-        + REPORT_MAX_WAIT_MINUTES * 60
+        + max_wait_minutes * 60
     )
-
-    session = requests.Session()
 
     while time.time() < deadline:
 
-        try:
+        time.sleep(
+            poll_seconds
+        )
 
-            response = session.get(
-                GFW_LAST_REPORT_URL,
-                headers=gfw_headers(),
-                timeout=HTTP_TIMEOUT_SECONDS,
+        latest = get_last_report(
+            token,
+            timeout,
+        )
+
+        latest_id = (
+            extract_report_identifier(
+                latest
             )
+        )
 
-            response.raise_for_status()
+        if (
+            latest_id
+            and latest_id != report_id
+        ):
+            continue
 
-            data = response.json()
+        status = str(
+            latest.get(
+                "status",
+                ""
+            )
+        ).lower()
 
-            if "entries" in data:
-                return data
-
-            status = str(
-                data.get("status", "")
-            ).lower()
+        if status in (
+            "running",
+            "pending",
+            "processing",
+        ):
 
             print(
-                "[GFW] report status:",
-                status or "unknown"
+                f"[GFW] status: {status}"
             )
 
-            if status in (
-                "failed",
-                "error",
-                "cancelled",
+            continue
+
+        if status in (
+            "failed",
+            "error",
+        ):
+
+            raise RuntimeError(
+                "GFW report failed:\n"
+                + json.dumps(
+                    latest,
+                    indent=2,
+                )
+            )
+
+        if (
+            "entries" in latest
+            or "data" in latest
+            or "results" in latest
+            or "rows" in latest
+        ):
+
+            print(
+                "[GFW] report ready."
+            )
+
+            return latest
+
+        if isinstance(
+            latest.get("report"),
+            dict,
+        ):
+
+            report = latest["report"]
+
+            if (
+                "entries" in report
+                or "data" in report
+                or "results" in report
+                or "rows" in report
             ):
-                raise RuntimeError(
-                    "GFW report failed:\n"
-                    + json.dumps(
-                        data,
-                        indent=2
-                    )[:5000]
+
+                print(
+                    "[GFW] report ready."
                 )
 
-        except Exception as exc:
+                return report
 
-            print(
-                "[GFW] polling error:",
-                exc
-            )
-
-        time.sleep(
-            REPORT_POLL_SECONDS
+        print(
+            "[GFW] still waiting..."
         )
 
     raise TimeoutError(
         "GFW report did not finish within "
-        f"{REPORT_MAX_WAIT_MINUTES} minutes."
+        f"{max_wait_minutes} minutes."
+    )
+
+
+# ============================================================
+# GFW REQUEST WITH RETRIES
+# ============================================================
+
+def request_gfw(
+    token,
+    polygon,
+    start,
+    end,
+    spatial_resolution,
+    temporal_resolution,
+    group_by,
+    timeout,
+    retries,
+    poll_seconds,
+    max_wait_minutes,
+):
+
+    last_error = None
+
+    for attempt in range(
+        1,
+        retries + 1,
+    ):
+
+        try:
+
+            report = submit_gfw_report(
+                token=token,
+                polygon=polygon,
+                start=start,
+                end=end,
+                spatial_resolution=(
+                    spatial_resolution
+                ),
+                temporal_resolution=(
+                    temporal_resolution
+                ),
+                group_by=group_by,
+                timeout=timeout,
+            )
+
+            return download_report_if_needed(
+                token=token,
+                report_response=report,
+                timeout=timeout,
+                poll_seconds=poll_seconds,
+                max_wait_minutes=(
+                    max_wait_minutes
+                ),
+            )
+
+        except requests.HTTPError as e:
+
+            last_error = e
+
+            status = (
+                e.response.status_code
+                if e.response is not None
+                else None
+            )
+
+            # 422 = malformed/invalid request.
+            # Retrying it is pointless.
+            if status not in (
+                429,
+                500,
+                502,
+                503,
+                504,
+                524,
+            ):
+
+                raise
+
+            if attempt < retries:
+
+                wait = min(
+                    10 * attempt,
+                    30,
+                )
+
+                print(
+                    f"[GFW] HTTP {status}; "
+                    f"retrying in {wait}s "
+                    f"({attempt}/{retries})..."
+                )
+
+                time.sleep(wait)
+
+        except (
+            requests.RequestException,
+            TimeoutError,
+        ) as e:
+
+            last_error = e
+
+            if attempt < retries:
+
+                wait = min(
+                    10 * attempt,
+                    30,
+                )
+
+                print(
+                    "[GFW] network/timeout error; "
+                    f"retrying in {wait}s "
+                    f"({attempt}/{retries})..."
+                )
+
+                time.sleep(wait)
+
+    raise RuntimeError(
+        f"GFW request failed after "
+        f"{retries} attempts: {last_error}"
     )
 
 
@@ -706,32 +869,54 @@ def poll_gfw_report(report_response):
 # GFW RESPONSE PARSER
 # ============================================================
 
-def rows_from_gfw(response):
+def rows_from_gfw(data):
     """
-    Actual GFW response shape:
+    Parse the ACTUAL GFW 4Wings structure.
+
+    The returned JSON looks like:
 
     {
+        "total": 1,
         "entries": [
             {
                 "public-global-presence:v4.0": [
-                    {...},
-                    {...}
+                    {
+                        "date": "...",
+                        "entryTimestamp": "...",
+                        "exitTimestamp": "...",
+                        "hours": 1,
+                        "lat": 30.25,
+                        "lon": 122.17,
+                        "mmsi": "412427478"
+                    }
                 ]
             }
         ]
     }
+
+    Therefore we need:
+
+        entries
+          -> dataset key
+             -> list of vessel rows
     """
 
     if not isinstance(
-        response,
-        dict
+        data,
+        dict,
     ):
         return []
 
-    entries = response.get(
+    entries = data.get(
         "entries",
         []
     )
+
+    if not isinstance(
+        entries,
+        list,
+    ):
+        return []
 
     rows = []
 
@@ -739,55 +924,92 @@ def rows_from_gfw(response):
 
         if not isinstance(
             entry,
-            dict
+            dict,
         ):
             continue
 
-        for dataset_name, dataset_rows in entry.items():
+        # Example key:
+        #
+        # public-global-presence:v4.0
+
+        for (
+            dataset_key,
+            dataset_rows,
+        ) in entry.items():
 
             if not isinstance(
                 dataset_rows,
-                list
+                list,
             ):
                 continue
 
             for row in dataset_rows:
 
-                if not isinstance(
+                if isinstance(
                     row,
-                    dict
+                    dict,
                 ):
-                    continue
-
-                clean = dict(row)
-
-                clean["_dataset"] = (
-                    dataset_name
-                )
-
-                rows.append(clean)
+                    rows.append(row)
 
     return rows
 
 
 def normalize_row(row):
     """
-    Normalize a single GFW presence observation.
+    Normalize one GFW public-global-presence row.
     """
 
-    # IMPORTANT:
-    # `date` is the actual hourly presence observation.
-    # entryTimestamp / exitTimestamp describe the presence
-    # interval and are not used as the observation timestamp.
+    if not isinstance(
+        row,
+        dict,
+    ):
+        return None
 
-    dt = parse_datetime(
-        row.get("date")
-    )
+    # --------------------------------------------------------
+    # TIME
+    # --------------------------------------------------------
 
+    dt = None
+
+    # GFW report's actual observation timestamp.
+    if row.get("date"):
+
+        try:
+            dt = parse_dt(
+                row["date"]
+            )
+
+        except Exception:
+            dt = None
+
+    # Fallbacks.
     if dt is None:
-        dt = parse_datetime(
-            row.get("entryTimestamp")
-        )
+
+        for key in (
+            "timestamp",
+            "datetime",
+            "time",
+            "entryTimestamp",
+            "entry_timestamp",
+        ):
+
+            if not row.get(key):
+                continue
+
+            try:
+
+                dt = parse_dt(
+                    row[key]
+                )
+
+                break
+
+            except Exception:
+                pass
+
+    # --------------------------------------------------------
+    # POSITION
+    # --------------------------------------------------------
 
     lat = safe_float(
         row.get("lat")
@@ -797,1006 +1019,822 @@ def normalize_row(row):
         row.get("lon")
     )
 
-    mmsi = row.get("mmsi")
+    # Fallback field names.
+    if lat is None:
 
-    if mmsi is not None:
-        mmsi = str(mmsi)
+        lat = safe_float(
+            row.get("latitude")
+        )
+
+    if lon is None:
+
+        lon = safe_float(
+            row.get("longitude")
+        )
 
     if (
-        dt is None
-        or lat is None
+        lat is None
         or lon is None
-        or not mmsi
     ):
         return None
 
+    # --------------------------------------------------------
+    # IDENTITY
+    # --------------------------------------------------------
+
+    mmsi = row.get(
+        "mmsi"
+    )
+
+    vessel_id = (
+        row.get("vessel_id")
+        or row.get("vesselId")
+        or row.get("vesselID")
+    )
+
+    if (
+        not mmsi
+        and not vessel_id
+    ):
+        return None
+
+    # --------------------------------------------------------
+    # NORMALIZED OBJECT
+    # --------------------------------------------------------
+
     return {
-        "time_utc": dt,
+        "datetime": dt,
+
         "lat": lat,
         "lon": lon,
-        "mmsi": mmsi,
+
+        "mmsi": (
+            str(mmsi)
+            if mmsi
+            else None
+        ),
+
+        "vessel_id": (
+            str(vessel_id)
+            if vessel_id
+            else None
+        ),
+
+        "vessel_name": (
+            row.get("shipName")
+            or row.get("vesselName")
+            or row.get("ship_name")
+            or row.get("vessel_name")
+        ),
+
+        "imo": (
+            row.get("imo")
+            or row.get("IMO")
+        ),
+
+        "callsign": (
+            row.get("callsign")
+            or row.get("callSign")
+        ),
+
+        "flag": (
+            row.get("flag")
+            or row.get("flag_code")
+        ),
+
+        "vessel_type": (
+            row.get("vesselType")
+            or row.get("vessel_type")
+        ),
+
+        "geartype": (
+            row.get("geartype")
+            or row.get("gearType")
+            or row.get("gear_type")
+        ),
+
         "hours": safe_float(
             row.get("hours")
         ),
+
         "entry_timestamp": (
             row.get("entryTimestamp")
         ),
+
         "exit_timestamp": (
             row.get("exitTimestamp")
         ),
-        "dataset": row.get(
-            "_dataset"
-        ),
+
+        "raw": row,
     }
 
 
-def parse_gfw_rows(response):
-    raw_rows = rows_from_gfw(
-        response
+def parse_gfw_rows(data):
+
+    rows = rows_from_gfw(
+        data
+    )
+
+    print(
+        f"[GFW] raw vessel rows: "
+        f"{len(rows)}"
     )
 
     normalized = []
 
-    for row in raw_rows:
+    for row in rows:
 
-        clean = normalize_row(
+        item = normalize_row(
             row
         )
 
-        if clean is not None:
-            normalized.append(
-                clean
-            )
+        if item is not None:
+            normalized.append(item)
 
-    normalized.sort(
-        key=lambda x: (
-            x["mmsi"],
-            x["time_utc"]
-        )
+    print(
+        f"[GFW] normalized AIS rows: "
+        f"{len(normalized)}"
     )
 
     return normalized
 
 
 # ============================================================
-# AIS INDEX
-# ============================================================
-
-def build_ais_index(rows):
-    """
-    MMSI -> hourly observations
-    """
-
-    index = {}
-
-    for row in rows:
-
-        mmsi = row["mmsi"]
-
-        index.setdefault(
-            mmsi,
-            []
-        ).append(row)
-
-    return index
-
-
-# ============================================================
-# SOURCE PROBABILITY MATCHING
-# ============================================================
-
-def probability_field_match(
-    ais_lat,
-    ais_lon,
-    hypothesis,
-    sigma_km
-):
-    """
-    Weighted compatibility between one AIS position
-    and the entire Stage-2 probability field for that hour.
-
-    This is better than simply taking the closest/top
-    cell because it uses the probability values themselves.
-
-        compatibility =
-            sum(
-                probability_i *
-                Gaussian(distance_i)
-            )
-
-    Also returns the probability-weighted mean distance.
-    """
-
-    cells = hypothesis["cells"]
-
-    if not cells:
-        return {
-            "compatibility": 0.0,
-            "distance_km": None,
-            "probability_mass": 0.0,
-        }
-
-    weighted_score = 0.0
-    weighted_distance = 0.0
-    total_probability = 0.0
-
-    for cell in cells:
-
-        p = max(
-            0.0,
-            float(
-                cell["probability"]
-            )
-        )
-
-        if p <= 0:
-            continue
-
-        d = haversine_km(
-            ais_lat,
-            ais_lon,
-            cell["lat"],
-            cell["lon"]
-        )
-
-        kernel = gaussian(
-            d,
-            sigma_km
-        )
-
-        weighted_score += (
-            p * kernel
-        )
-
-        weighted_distance += (
-            p * d
-        )
-
-        total_probability += p
-
-    if total_probability <= 0:
-        return {
-            "compatibility": 0.0,
-            "distance_km": None,
-            "probability_mass": 0.0,
-        }
-
-    # Normalize by represented probability mass.
-    #
-    # This prevents a hypothesis with more listed top
-    # cells from automatically getting a larger score.
-    normalized_score = (
-        weighted_score
-        / total_probability
-    )
-
-    mean_distance = (
-        weighted_distance
-        / total_probability
-    )
-
-    return {
-        "compatibility": normalized_score,
-        "distance_km": mean_distance,
-        "probability_mass": total_probability,
-    }
-
-
-# ============================================================
-# TIME MATCHING
-# ============================================================
-
-def nearest_ais_row(
-    rows,
-    target_time,
-    max_delta_hours=0.75
-):
-    """
-    Find nearest AIS hourly observation for a vessel.
-
-    GFW is hourly, so 45 minutes gives us some tolerance
-    without allowing arbitrary time shifts.
-    """
-
-    if not rows:
-        return None
-
-    best = None
-    best_delta = None
-
-    for row in rows:
-
-        delta = abs(
-            (
-                row["time_utc"]
-                - target_time
-            ).total_seconds()
-        )
-
-        if (
-            best_delta is None
-            or delta < best_delta
-        ):
-            best = row
-            best_delta = delta
-
-    if best is None:
-        return None
-
-    if best_delta > (
-        max_delta_hours * 3600
-    ):
-        return None
-
-    return best
-
-
-# ============================================================
-# TRAJECTORY CONSISTENCY
-# ============================================================
-
-def implied_speed_knots(
-    row1,
-    row2
-):
-    if not row1 or not row2:
-        return None
-
-    dt_hours = (
-        row2["time_utc"]
-        - row1["time_utc"]
-    ).total_seconds() / 3600.0
-
-    if dt_hours <= 0:
-        return None
-
-    distance_km = haversine_km(
-        row1["lat"],
-        row1["lon"],
-        row2["lat"],
-        row2["lon"]
-    )
-
-    km_per_hour = (
-        distance_km
-        / dt_hours
-    )
-
-    return km_per_hour / 1.852
-
-
-def speed_penalty(
-    speed_knots,
-    soft_limit
-):
-    """
-    Soft penalty.
-
-    <= limit:
-        1.0
-
-    > limit:
-        smoothly decreases.
-
-    We don't hard reject because AIS can contain
-    gaps / position artifacts and some vessels move fast.
-    """
-
-    if speed_knots is None:
-        return 1.0
-
-    if speed_knots <= soft_limit:
-        return 1.0
-
-    ratio = (
-        speed_knots
-        / soft_limit
-    )
-
-    return 1.0 / (
-        1.0
-        + (ratio - 1.0) ** 2
-    )
-
-
-# ============================================================
 # VESSEL TYPE PRIOR
 # ============================================================
 
-def vessel_type_prior(shiptype):
-    if not shiptype:
-        return 0.30
+TYPE_PRIOR = {
+    "tanker": 1.00,
+    "cargo": 0.80,
+    "carrier": 0.75,
+    "support": 0.65,
+    "bunker": 0.75,
+    "tug": 0.55,
+    "fishing": 0.45,
+    "passenger": 0.20,
+    "unknown": 0.30,
+    "other": 0.30,
+}
+
+
+def vessel_type_prior(vessel_type):
+
+    if not vessel_type:
+        return TYPE_PRIOR[
+            "unknown"
+        ]
 
     text = str(
-        shiptype
-    ).upper()
+        vessel_type
+    ).lower()
 
-    # GFW vessel categories vary. Keep this deliberately
-    # broad rather than pretending every category is exact.
+    for key, value in TYPE_PRIOR.items():
 
-    if any(
-        x in text
-        for x in (
-            "TANKER",
-            "OIL_TANKER",
-            "CHEMICAL_TANKER",
-            "LNG",
-            "LPG",
-        )
-    ):
-        return 1.00
+        if key in text:
+            return value
 
-    if any(
-        x in text
-        for x in (
-            "CARGO",
-            "CONTAINER",
-            "BULK",
-            "GENERAL_CARGO",
-        )
-    ):
-        return 0.80
-
-    if "CARRIER" in text:
-        return 0.75
-
-    if any(
-        x in text
-        for x in (
-            "BUNKER",
-            "FUEL",
-        )
-    ):
-        return 0.80
-
-    if any(
-        x in text
-        for x in (
-            "SUPPORT",
-            "OFFSHORE",
-        )
-    ):
-        return 0.65
-
-    if "TUG" in text:
-        return 0.55
-
-    if "FISH" in text:
-        return 0.45
-
-    if any(
-        x in text
-        for x in (
-            "PASSENGER",
-            "CRUISE",
-            "PLEASURE",
-        )
-    ):
-        return 0.20
-
-    return 0.30
+    return TYPE_PRIOR[
+        "other"
+    ]
 
 
 # ============================================================
-# SCORE ONE VESSEL
+# SCORE VESSELS
 # ============================================================
 
-def score_vessel(
-    mmsi,
+def score_vessels(
     ais_rows,
-    hypotheses
+    source_probability,
+    sigma_km,
 ):
     """
-    Main attribution score.
+    Match AIS vessel positions against the Stage-2
+    possible-source probability field.
 
-    For every Stage-2 hour:
+    For every AIS observation:
 
-        AIS position
-             ↓
-        Stage-2 probability field
-             ↓
-        probability-weighted spatial compatibility
+        1. Find the corresponding UTC hour.
+        2. Find Stage-2 possible source cells for that hour.
+        3. Calculate distance to every possible source cell.
+        4. Calculate Gaussian spatial compatibility.
+        5. Multiply by source probability.
+        6. Keep the strongest match for that AIS observation.
 
-    Then add:
+    Vessel score:
 
-        temporal coverage
-        consecutive hit behavior
-        trajectory speed consistency
+        compatibility_sum
+        *
+        temporal_coverage_factor
+        *
+        vessel_type_factor
+
+    IMPORTANT:
+    This is a compatibility ranking.
+    It is NOT a probability that the vessel caused the spill.
     """
 
-    if not ais_rows:
-        return None
+    by_vessel = defaultdict(list)
 
-    matched = []
+    # --------------------------------------------------------
+    # Group AIS observations by vessel.
+    # --------------------------------------------------------
 
-    total_compatibility = 0.0
-    matched_hours = 0
+    for row in ais_rows:
 
-    consecutive = 0
-    longest_consecutive = 0
-
-    speeds = []
-    speed_penalties = []
-
-    previous_match = None
-
-    for hypothesis in hypotheses:
-
-        target_time = (
-            hypothesis["time_utc"]
+        dt = row.get(
+            "datetime"
         )
 
-        ais = nearest_ais_row(
-            ais_rows,
-            target_time
-        )
-
-        if ais is None:
-            consecutive = 0
+        if dt is None:
             continue
 
-        match = probability_field_match(
-            ais["lat"],
-            ais["lon"],
-            hypothesis,
-            MATCH_SIGMA_KM
+        if (
+            row.get("lat") is None
+            or row.get("lon") is None
+        ):
+            continue
+
+        key = (
+            row.get("mmsi")
+            or row.get("vessel_id")
         )
 
-        compatibility = (
-            match["compatibility"]
-        )
+        if not key:
+            continue
 
-        # Count a temporal hit when there is
-        # meaningful spatial compatibility.
-        is_hit = (
-            compatibility >= MIN_MATCH_SCORE
-        )
-
-        if is_hit:
-
-            matched_hours += 1
-
-            total_compatibility += (
-                compatibility
-            )
-
-            consecutive += 1
-
-            longest_consecutive = max(
-                longest_consecutive,
-                consecutive
-            )
-
-            if previous_match is not None:
-
-                speed = implied_speed_knots(
-                    previous_match,
-                    ais
-                )
-
-                if speed is not None:
-                    speeds.append(
-                        speed
-                    )
-
-                    speed_penalties.append(
-                        speed_penalty(
-                            speed,
-                            SPEED_SOFT_LIMIT_KNOTS
-                        )
-                    )
-
-            previous_match = ais
-
-            matched.append({
-                "time_utc": iso_utc(
-                    target_time
-                ),
-                "hours_before_observation":
-                    hypothesis.get(
-                        "hours_before_observation"
-                    ),
-                "ais_lat": ais["lat"],
-                "ais_lon": ais["lon"],
-                "distance_km": match[
-                    "distance_km"
-                ],
-                "compatibility": compatibility,
-                "probability_mass": match[
-                    "probability_mass"
-                ],
-            })
-
-        else:
-            consecutive = 0
+        by_vessel[
+            str(key)
+        ].append(row)
 
     modeled_hours = len(
-        hypotheses
+        source_probability
     )
-
-    if modeled_hours <= 0:
-        return None
-
-    temporal_coverage = (
-        matched_hours
-        / modeled_hours
-    )
-
-    if matched_hours > 0:
-        mean_compatibility = (
-            total_compatibility
-            / matched_hours
-        )
-    else:
-        mean_compatibility = 0.0
-
-    if speed_penalties:
-        trajectory_consistency = (
-            sum(speed_penalties)
-            / len(speed_penalties)
-        )
-    else:
-        trajectory_consistency = 1.0
-
-    # Reward sustained temporal consistency,
-    # but don't allow coverage to completely dominate.
-    coverage_factor = (
-        0.5
-        + 0.5 * temporal_coverage
-    )
-
-    # Reward vessels that maintain compatible
-    # positions over multiple consecutive hours.
-    if modeled_hours > 1:
-        continuity_factor = (
-            0.75
-            + 0.25
-            * (
-                longest_consecutive
-                / modeled_hours
-            )
-        )
-    else:
-        continuity_factor = 1.0
-
-    # Trajectory consistency factor.
-    trajectory_factor = (
-        0.75
-        + 0.25
-        * trajectory_consistency
-    )
-
-    base_score = (
-        mean_compatibility
-        * coverage_factor
-        * continuity_factor
-        * trajectory_factor
-    )
-
-    return {
-        "mmsi": mmsi,
-
-        "score": base_score,
-
-        "mean_hourly_compatibility":
-            mean_compatibility,
-
-        "temporal_coverage":
-            temporal_coverage,
-
-        "matched_hours":
-            matched_hours,
-
-        "modeled_hours":
-            modeled_hours,
-
-        "longest_consecutive_match":
-            longest_consecutive,
-
-        "trajectory_consistency":
-            trajectory_consistency,
-
-        "mean_speed_knots": (
-            sum(speeds) / len(speeds)
-            if speeds
-            else None
-        ),
-
-        "max_speed_knots": (
-            max(speeds)
-            if speeds
-            else None
-        ),
-
-        "top_matches": sorted(
-            matched,
-            key=lambda x:
-                x["compatibility"],
-            reverse=True
-        )[:TOP_MATCHES_PER_VESSEL],
-    }
-
-
-# ============================================================
-# GFW VESSEL IDENTITY
-# ============================================================
-
-def extract_identity_from_entry(entry):
-    """
-    GFW search response contains:
-
-        entries[]
-          registryInfo[]
-          selfReportedInfo[]
-
-    We prefer selfReportedInfo because it is directly
-    tied to AIS identity, but use registryInfo as fallback.
-    """
-
-    if not isinstance(
-        entry,
-        dict
-    ):
-        return None
 
     candidates = []
 
-    self_reported = entry.get(
-        "selfReportedInfo",
-        []
-    )
+    # --------------------------------------------------------
+    # Score each vessel.
+    # --------------------------------------------------------
 
-    registry_info = entry.get(
-        "registryInfo",
-        []
-    )
+    for (
+        vessel_key,
+        rows,
+    ) in by_vessel.items():
 
-    if isinstance(
-        self_reported,
-        list
-    ):
-        candidates.extend(
-            self_reported
+        compatibility_sum = 0.0
+
+        matches = []
+
+        strongest = None
+
+        matched_hour_keys = set()
+
+        # ----------------------------------------------------
+        # Every AIS position.
+        # ----------------------------------------------------
+
+        for row in rows:
+
+            hour = row[
+                "datetime"
+            ].replace(
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+
+            source_cells = (
+                source_probability.get(
+                    hour
+                )
+            )
+
+            if not source_cells:
+                continue
+
+            best_match = None
+
+            # ------------------------------------------------
+            # Compare against Stage-2 source cells.
+            # ------------------------------------------------
+
+            for cell in source_cells:
+
+                distance_km = (
+                    haversine_km(
+                        row["lat"],
+                        row["lon"],
+                        cell["lat"],
+                        cell["lon"],
+                    )
+                )
+
+                distance_weight = (
+                    gaussian(
+                        distance_km,
+                        sigma_km,
+                    )
+                )
+
+                match_score = (
+                    cell["probability"]
+                    * distance_weight
+                )
+
+                match = {
+                    "ais_time_utc": iso_z(
+                        row["datetime"]
+                    ),
+
+                    "ais_lat": row["lat"],
+                    "ais_lon": row["lon"],
+
+                    "source_lat": cell["lat"],
+                    "source_lon": cell["lon"],
+
+                    "distance_km": (
+                        distance_km
+                    ),
+
+                    "source_probability": (
+                        cell["probability"]
+                    ),
+
+                    "match_score": (
+                        match_score
+                    ),
+                }
+
+                if (
+                    best_match is None
+                    or match_score
+                    > best_match[
+                        "match_score"
+                    ]
+                ):
+
+                    best_match = match
+
+            # ------------------------------------------------
+            # Keep strongest source-cell match.
+            # ------------------------------------------------
+
+            if best_match:
+
+                compatibility_sum += (
+                    best_match[
+                        "match_score"
+                    ]
+                )
+
+                matches.append(
+                    best_match
+                )
+
+                matched_hour_keys.add(
+                    hour
+                )
+
+                if (
+                    strongest is None
+                    or best_match[
+                        "match_score"
+                    ]
+                    > strongest[
+                        "match_score"
+                    ]
+                ):
+
+                    strongest = (
+                        best_match
+                    )
+
+        # ----------------------------------------------------
+        # Temporal coverage.
+        # ----------------------------------------------------
+
+        matched_hours = len(
+            matched_hour_keys
         )
 
-    if isinstance(
-        registry_info,
-        list
-    ):
-        candidates.extend(
-            registry_info
+        temporal_coverage = (
+            matched_hours
+            / modeled_hours
+            if modeled_hours
+            else 0.0
         )
 
-    if not candidates:
-        return None
+        # ----------------------------------------------------
+        # Vessel metadata.
+        # ----------------------------------------------------
 
-    # Prefer entries with matching MMSI/SSVID,
-    # then prefer entries containing useful identity data.
-    candidates.sort(
-        key=lambda x: (
-            bool(
-                x.get("ssvid")
-                or x.get("mmsi")
-            ),
-            bool(
-                x.get("shipname")
-            ),
-            bool(
-                x.get("imo")
-            ),
-            bool(
-                x.get("flag")
-            ),
-        ),
-        reverse=True
-    )
+        first_row = rows[0]
 
-    return candidates[0]
-
-
-def lookup_vessel_identity(
-    mmsi,
-    session=None
-):
-    """
-    Search GFW Vessel API by MMSI/SSVID.
-
-    Current GFW API:
-        GET /v3/vessels/search
-
-    Example:
-        ?query=412331038
-        &datasets[0]=public-global-vessel-identity:latest
-    """
-
-    if not GFW_API_TOKEN:
-        return {
-            "lookup_status": "missing_token"
-        }
-
-    if session is None:
-        session = requests.Session()
-
-    params = [
-        (
-            "query",
-            str(mmsi)
-        ),
-        (
-            "datasets[0]",
-            GFW_VESSEL_DATASET
-        ),
-    ]
-
-    try:
-
-        response = session.get(
-            GFW_VESSEL_SEARCH_URL,
-            headers={
-                "Authorization":
-                    f"Bearer {GFW_API_TOKEN}",
-                "Accept":
-                    "application/json",
-            },
-            params=params,
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
-
-        if response.status_code == 404:
-            return {
-                "lookup_status": "not_found"
-            }
-
-        if response.status_code == 429:
-            return {
-                "lookup_status":
-                    "rate_limited"
-            }
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        entries = data.get(
-            "entries",
-            []
-        )
-
-        if not entries:
-            return {
-                "lookup_status":
-                    "not_found"
-            }
-
-        identity = (
-            extract_identity_from_entry(
-                entries[0]
+        type_prior = (
+            vessel_type_prior(
+                first_row.get(
+                    "vessel_type"
+                )
             )
         )
 
-        if not identity:
-            return {
-                "lookup_status":
-                    "no_identity_record"
-            }
+        # ----------------------------------------------------
+        # Final ranking score.
+        # ----------------------------------------------------
 
-        return {
-            "lookup_status": "found",
+        final_score = (
+            compatibility_sum
+            * (
+                0.5
+                + 0.5
+                * temporal_coverage
+            )
+            * (
+                0.5
+                + 0.5
+                * type_prior
+            )
+        )
 
-            "gfw_vessel_id":
-                identity.get("id"),
+        # ----------------------------------------------------
+        # Strongest matches first.
+        # ----------------------------------------------------
 
-            "mmsi":
-                identity.get(
-                    "ssvid",
-                    identity.get("mmsi")
+        matches.sort(
+            key=lambda x: x[
+                "match_score"
+            ],
+            reverse=True,
+        )
+
+        candidates.append(
+            {
+                "mmsi": first_row.get(
+                    "mmsi"
                 ),
 
-            "shipname":
-                identity.get(
-                    "shipname"
+                "vessel_id": first_row.get(
+                    "vessel_id"
                 ),
 
-            "imo":
-                identity.get(
+                "vessel_name": first_row.get(
+                    "vessel_name"
+                ),
+
+                "imo": first_row.get(
                     "imo"
                 ),
 
-            "flag":
-                identity.get(
-                    "flag"
-                ),
-
-            "callsign":
-                identity.get(
+                "callsign": first_row.get(
                     "callsign"
                 ),
 
-            "shiptype":
-                identity.get(
-                    "shiptype"
+                "flag": first_row.get(
+                    "flag"
                 ),
 
-            "geartype":
-                identity.get(
+                "vessel_type": first_row.get(
+                    "vessel_type"
+                ),
+
+                "geartype": first_row.get(
                     "geartype"
                 ),
 
-            "match_fields":
-                identity.get(
-                    "matchFields"
+                "matched_hours": (
+                    matched_hours
                 ),
 
-            "source_code":
-                identity.get(
-                    "sourceCode"
+                "modeled_hours": (
+                    modeled_hours
                 ),
 
-            "transmission_date_from":
-                identity.get(
-                    "transmissionDateFrom"
+                "temporal_coverage_fraction": (
+                    temporal_coverage
                 ),
 
-            "transmission_date_to":
-                identity.get(
-                    "transmissionDateTo"
+                "type_prior": (
+                    type_prior
                 ),
-        }
 
-    except Exception as exc:
+                "source_compatibility_score": (
+                    compatibility_sum
+                ),
 
-        return {
-            "lookup_status": "error",
-            "error": str(exc),
-        }
+                "final_score": (
+                    final_score
+                ),
 
+                "strongest_match": (
+                    strongest
+                ),
 
-def enrich_candidates(
-    candidates
-):
-    """
-    Resolve identity only for the strongest candidates.
-
-    This prevents hundreds/thousands of API requests.
-    """
-
-    session = requests.Session()
-
-    total = min(
-        VESSEL_IDENTITY_TOP_N,
-        len(candidates)
-    )
-
-    print()
-    print(
-        "[GFW VESSEL API] resolving identities..."
-    )
-
-    print(
-        "[GFW VESSEL API] candidates:",
-        total
-    )
-
-    for index in range(total):
-
-        candidate = candidates[index]
-
-        mmsi = candidate.get(
-            "mmsi"
-        )
-
-        print(
-            f"[IDENTITY] "
-            f"{index + 1}/{total} "
-            f"MMSI={mmsi}"
-        )
-
-        identity = lookup_vessel_identity(
-            mmsi,
-            session=session
-        )
-
-        candidate["vessel_identity"] = (
-            identity
-        )
-
-        # Add type prior AFTER identity lookup.
-        shiptype = identity.get(
-            "shiptype"
-        )
-
-        prior = vessel_type_prior(
-            shiptype
-        )
-
-        candidate["vessel_type_prior"] = (
-            prior
-        )
-
-        # Apply type prior as a modest multiplier.
-        #
-        # IMPORTANT:
-        # We do not let vessel type dominate spatial/
-        # temporal evidence.
-        raw_score = candidate.get(
-            "score",
-            0.0
-        )
-
-        candidate["score_before_type_prior"] = (
-            raw_score
-        )
-
-        candidate["score"] = (
-            raw_score
-            * (
-                0.5
-                + 0.5 * prior
-            )
-        )
-
-        time.sleep(
-            0.05
-        )
-
-    # Candidates outside the identity lookup remain
-    # valid AIS candidates, but have unknown identity.
-    for candidate in candidates[total:]:
-
-        candidate.setdefault(
-            "vessel_identity",
-            {
-                "lookup_status":
-                    "not_requested"
+                "top_matches": (
+                    matches
+                ),
             }
         )
 
-        candidate.setdefault(
-            "vessel_type_prior",
-            0.30
-        )
-
-        candidate["score_before_type_prior"] = (
-            candidate.get(
-                "score",
-                0.0
-            )
-        )
+    # --------------------------------------------------------
+    # Highest score first.
+    # --------------------------------------------------------
 
     candidates.sort(
-        key=lambda x:
-            x.get("score", 0.0),
-        reverse=True
+        key=lambda x: x[
+            "final_score"
+        ],
+        reverse=True,
     )
+
+    for rank, candidate in enumerate(
+        candidates,
+        start=1,
+    ):
+
+        candidate[
+            "rank"
+        ] = rank
 
     return candidates
 
 
 # ============================================================
-# OUTPUT
+# JSON OUTPUT
 # ============================================================
 
 def write_json(
     path,
-    data
+    data,
 ):
+
     path.parent.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
 
     with open(
         path,
         "w",
-        encoding="utf-8"
+        encoding="utf-8",
     ) as f:
 
         json.dump(
             data,
             f,
             indent=2,
-            ensure_ascii=False
+            ensure_ascii=False,
         )
+
+
+# ============================================================
+# BUILD FINAL OUTPUT
+# ============================================================
+
+def build_output(
+    handoff,
+    source_probability,
+    ais_rows,
+    candidates,
+    aoi,
+    aoi_source,
+    ais_start,
+    ais_end,
+    time_source,
+    config,
+):
+
+    observation = handoff.get(
+        "observation",
+        {}
+    )
+
+    backtracking = handoff.get(
+        "backtracking",
+        {}
+    )
+
+    return {
+
+        "schema_version": "1.0",
+
+        "event_id": handoff.get(
+            "event_id"
+        ),
+
+        "generated_at_utc": (
+            iso_z(utc_now())
+        ),
+
+        # ----------------------------------------------------
+        # Observation
+        # ----------------------------------------------------
+
+        "observation": observation,
+
+        # ----------------------------------------------------
+        # Backtracking
+        # ----------------------------------------------------
+
+        "backtracking": {
+
+            "method": backtracking.get(
+                "method"
+            ),
+
+            "simulation_start_utc": (
+                backtracking.get(
+                    "simulation_start_utc"
+                )
+            ),
+
+            "simulation_end_utc": (
+                backtracking.get(
+                    "simulation_end_utc"
+                )
+            ),
+
+            "backtrack_hours": (
+                backtracking.get(
+                    "backtrack_hours"
+                )
+            ),
+
+            "initial_seed_particles": (
+                backtracking.get(
+                    "initial_seed_particles"
+                )
+            ),
+
+            "currents": (
+                backtracking.get(
+                    "currents"
+                )
+            ),
+
+            "winds": (
+                backtracking.get(
+                    "winds"
+                )
+            ),
+
+            "oil_type": (
+                backtracking.get(
+                    "oil_type"
+                )
+            ),
+        },
+
+        # ----------------------------------------------------
+        # AIS
+        # ----------------------------------------------------
+
+        "ais": {
+
+            "provider": (
+                "Global Fishing Watch"
+            ),
+
+            "dataset": (
+                "public-global-presence:latest"
+            ),
+
+            "aoi_wsen": {
+
+                "west": aoi[0],
+                "south": aoi[1],
+                "east": aoi[2],
+                "north": aoi[3],
+            },
+
+            "aoi_source": (
+                aoi_source
+            ),
+
+            "time_start_utc": (
+                iso_z(ais_start)
+            ),
+
+            "time_end_utc": (
+                iso_z(ais_end)
+            ),
+
+            "time_source": (
+                time_source
+            ),
+
+            "spatial_resolution": (
+                config[
+                    "GFW_SPATIAL_RESOLUTION"
+                ]
+            ),
+
+            "temporal_resolution": (
+                config[
+                    "GFW_TEMPORAL_RESOLUTION"
+                ]
+            ),
+
+            "group_by": (
+                config[
+                    "GFW_GROUP_BY"
+                ]
+            ),
+
+            "ais_rows": (
+                len(ais_rows)
+            ),
+        },
+
+        # ----------------------------------------------------
+        # Stage-2 source field
+        # ----------------------------------------------------
+
+        "source_probability_field": {
+
+            "hours": (
+                len(source_probability)
+            ),
+
+            "description": (
+                "Possible oil-source "
+                "locations produced by "
+                "Stage-2 backward "
+                "transport. These are "
+                "hypotheses, not confirmed "
+                "spill origins."
+            ),
+        },
+
+        # ----------------------------------------------------
+        # Summary
+        # ----------------------------------------------------
+
+        "summary": {
+
+            "ais_rows_used": (
+                len(ais_rows)
+            ),
+
+            "unique_vessels": (
+                len(candidates)
+            ),
+
+            "top_candidate": (
+                candidates[0]["mmsi"]
+                if candidates
+                else None
+            ),
+        },
+
+        # ----------------------------------------------------
+        # Candidates
+        # ----------------------------------------------------
+
+        "candidates": candidates,
+
+        # ----------------------------------------------------
+        # Limitations
+        # ----------------------------------------------------
+
+        "limitations": [
+
+            (
+                "AIS compatibility does not prove "
+                "a vessel caused the spill."
+            ),
+
+            (
+                "Stage-2 backtracking provides "
+                "possible source locations, not "
+                "a confirmed origin."
+            ),
+
+            (
+                "GFW public-global-presence "
+                "represents hourly vessel "
+                "presence and is not a continuous "
+                "raw AIS trajectory."
+            ),
+
+            (
+                "AIS gaps, transmission behavior, "
+                "vessel identity uncertainty, "
+                "and model uncertainty can affect "
+                "rankings."
+            ),
+
+            (
+                "The vessel-type prior is only "
+                "a weak ranking factor."
+            ),
+
+            (
+                "Scores are compatibility "
+                "rankings, not probabilities "
+                "of responsibility."
+            ),
+        ],
+    }
 
 
 # ============================================================
@@ -1805,459 +1843,544 @@ def write_json(
 
 def main():
 
-    print("=" * 72)
-    print("GFW AIS OIL-SPILL ATTRIBUTION")
-    print("=" * 72)
+    load_dotenv()
 
-    if not GFW_API_TOKEN:
-        raise RuntimeError(
-            "GFW_API_TOKEN is missing."
+    parser = argparse.ArgumentParser(
+        description=(
+            "AIS attribution using "
+            "Stage-2 oil-spill "
+            "backtracking hypotheses."
         )
-
-    handoff_path = Path(
-        INPUT_HANDOFF_PATH
     )
 
-    summary_path = Path(
-        INPUT_OBSERVATION_SUMMARY_PATH
+    parser.add_argument(
+        "--input",
+        default=os.getenv(
+            "INPUT_HANDOFF_PATH",
+            "./sanchi_2018_stage2_handoff.json",
+        ),
+        help=(
+            "Stage-2 handoff JSON path."
+        ),
+    )
+
+    parser.add_argument(
+        "--observation-summary",
+        default=os.getenv(
+            "INPUT_OBSERVATION_SUMMARY_PATH",
+            "./sanchi_2018_observation_summary.json",
+        ),
+        help=(
+            "Optional observation summary."
+        ),
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        default=os.getenv(
+            "OUTPUT_DIR",
+            "./ais_attribution_output",
+        ),
+        help=(
+            "Output directory."
+        ),
+    )
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Calculate AOI/time window "
+            "without contacting GFW."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    input_path = Path(
+        args.input
+    )
+
+    observation_summary_path = Path(
+        args.observation_summary
     )
 
     output_dir = Path(
-        OUTPUT_DIR
+        args.output_dir
     )
 
-    handoff = load_json(
-        handoff_path
-    )
+    # --------------------------------------------------------
+    # Validate input.
+    # --------------------------------------------------------
 
-    observation_summary = {}
+    if not input_path.exists():
 
-    if summary_path.exists():
-
-        observation_summary = (
-            load_json(
-                summary_path
-            )
+        raise FileNotFoundError(
+            f"Input handoff not found: "
+            f"{input_path}"
         )
 
-    event_id = get_event_id(
-        handoff
-    )
-
-    print(
-        "Event:",
-        event_id
-    )
-
-    print(
-        "Input:",
-        handoff_path
-    )
-
-    print("=" * 72)
-
     # --------------------------------------------------------
-    # Stage-2 probability field
+    # Load Stage-2.
     # --------------------------------------------------------
 
-    hypotheses = (
-        extract_source_probability_field(
+    handoff = load_handoff(
+        input_path
+    )
+
+    event_id = handoff.get(
+        "event_id",
+        input_path.stem,
+    )
+
+    # --------------------------------------------------------
+    # Source probability.
+    # --------------------------------------------------------
+
+    source_probability = (
+        get_source_probability_field(
             handoff
         )
     )
 
-    if not hypotheses:
-        raise RuntimeError(
-            "No Stage-2 origin hypotheses found."
+    if not source_probability:
+
+        raise ValueError(
+            "No origin_hypotheses/top_cells "
+            "found in Stage-2 handoff."
         )
 
-    print(
-        "Source-probability hours:",
-        len(hypotheses)
+    # --------------------------------------------------------
+    # Optional observation summary.
+    # --------------------------------------------------------
+
+    observation_summary = (
+        load_observation_summary(
+            observation_summary_path
+        )
     )
 
     # --------------------------------------------------------
-    # AOI
+    # Configuration.
+    # --------------------------------------------------------
+
+    spatial_padding_deg = float(
+        os.getenv(
+            "SPATIAL_PADDING_DEG",
+            "2.0",
+        )
+    )
+
+    time_padding_hours = float(
+        os.getenv(
+            "TIME_PADDING_HOURS",
+            "12",
+        )
+    )
+
+    # --------------------------------------------------------
+    # AOI.
+    # --------------------------------------------------------
+
+    aoi, aoi_source = get_aoi(
+        handoff,
+        observation_summary,
+        spatial_padding_deg,
+    )
+
+    # --------------------------------------------------------
+    # AIS time window.
     # --------------------------------------------------------
 
     (
-        west,
-        south,
-        east,
-        north,
-        aoi_source
-    ) = build_aoi(
+        ais_start,
+        ais_end,
+        time_source,
+    ) = get_time_window(
         handoff,
-        observation_summary
-    )
-
-    print(
-        "AIS AOI:",
-        f"W={west:.6f}, "
-        f"S={south:.6f}, "
-        f"E={east:.6f}, "
-        f"N={north:.6f}"
-    )
-
-    print(
-        "AOI source:",
-        aoi_source
-    )
-
-    polygon = make_polygon(
-        west,
-        south,
-        east,
-        north
+        observation_summary,
+        time_padding_hours,
     )
 
     # --------------------------------------------------------
-    # Time window
+    # Console summary.
     # --------------------------------------------------------
 
-    (
-        start_dt,
-        end_dt,
-        time_source
-    ) = build_time_window(
-        handoff,
-        observation_summary
+    print()
+
+    print(
+        "=" * 72
     )
 
     print(
-        "AIS time:",
-        iso_utc(start_dt),
-        "->",
-        iso_utc(end_dt)
+        f"Event: {event_id}"
     )
 
     print(
-        "Time source:",
-        time_source
+        f"Input: {input_path}"
+    )
+
+    print(
+        "=" * 72
+    )
+
+    print(
+        "Source-probability hours: "
+        f"{len(source_probability)}"
+    )
+
+    print(
+        "AIS AOI: "
+        f"W={aoi[0]:.6f}, "
+        f"S={aoi[1]:.6f}, "
+        f"E={aoi[2]:.6f}, "
+        f"N={aoi[3]:.6f}"
+    )
+
+    print(
+        "AIS time: "
+        f"{iso_z(ais_start)} "
+        f"-> "
+        f"{iso_z(ais_end)}"
+    )
+
+    print(
+        f"AOI source: {aoi_source}"
+    )
+
+    print(
+        f"Time source: {time_source}"
     )
 
     # --------------------------------------------------------
-    # GFW report
+    # Dry run.
     # --------------------------------------------------------
 
-    report_response = submit_gfw_report(
-        polygon,
-        start_dt,
-        end_dt
+    if args.dry_run:
+
+        print(
+            "DRY RUN: no GFW request made."
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # GFW token.
+    # --------------------------------------------------------
+
+    token = os.getenv(
+        "GFW_API_TOKEN"
     )
 
-    report_response = poll_gfw_report(
-        report_response
+    if not token:
+
+        raise RuntimeError(
+            "GFW_API_TOKEN is missing. "
+            "Put it in .env."
+        )
+
+    # --------------------------------------------------------
+    # GFW configuration.
+    # --------------------------------------------------------
+
+    config = {
+
+        "GFW_SPATIAL_RESOLUTION": (
+            os.getenv(
+                "GFW_SPATIAL_RESOLUTION",
+                "HIGH",
+            )
+        ),
+
+        "GFW_TEMPORAL_RESOLUTION": (
+            os.getenv(
+                "GFW_TEMPORAL_RESOLUTION",
+                "HOURLY",
+            )
+        ),
+
+        "GFW_GROUP_BY": (
+            os.getenv(
+                "GFW_GROUP_BY",
+                "MMSI",
+            )
+        ),
+    }
+
+    timeout = int(
+        os.getenv(
+            "HTTP_TIMEOUT_SECONDS",
+            "120",
+        )
     )
+
+    retries = int(
+        os.getenv(
+            "HTTP_RETRIES",
+            "3",
+        )
+    )
+
+    poll_seconds = int(
+        os.getenv(
+            "REPORT_POLL_SECONDS",
+            "10",
+        )
+    )
+
+    max_wait_minutes = int(
+        os.getenv(
+            "REPORT_MAX_WAIT_MINUTES",
+            "15",
+        )
+    )
+
+    sigma_km = float(
+        os.getenv(
+            "MATCH_SIGMA_KM",
+            "15",
+        )
+    )
+
+    min_match_score = float(
+        os.getenv(
+            "MIN_MATCH_SCORE",
+            "0.0",
+        )
+    )
+
+    top_matches_per_vessel = int(
+        os.getenv(
+            "TOP_MATCHES_PER_VESSEL",
+            "10",
+        )
+    )
+
+    # --------------------------------------------------------
+    # GeoJSON.
+    # --------------------------------------------------------
+
+    polygon = bbox_geojson(
+        aoi[0],
+        aoi[1],
+        aoi[2],
+        aoi[3],
+    )
+
+    # --------------------------------------------------------
+    # GFW query.
+    # --------------------------------------------------------
+
+    raw_report = request_gfw(
+        token=token,
+        polygon=polygon,
+        start=ais_start,
+        end=ais_end,
+        spatial_resolution=(
+            config[
+                "GFW_SPATIAL_RESOLUTION"
+            ]
+        ),
+        temporal_resolution=(
+            config[
+                "GFW_TEMPORAL_RESOLUTION"
+            ]
+        ),
+        group_by=(
+            config[
+                "GFW_GROUP_BY"
+            ]
+        ),
+        timeout=timeout,
+        retries=retries,
+        poll_seconds=poll_seconds,
+        max_wait_minutes=(
+            max_wait_minutes
+        ),
+    )
+
+    # --------------------------------------------------------
+    # Output directory.
+    # --------------------------------------------------------
 
     output_dir.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
 
-    raw_output_path = (
+    # --------------------------------------------------------
+    # Save raw GFW response.
+    # --------------------------------------------------------
+
+    raw_path = (
         output_dir
         / f"{event_id}_gfw_raw.json"
     )
 
     write_json(
-        raw_output_path,
-        report_response
+        raw_path,
+        raw_report,
     )
 
     print(
-        "[OUTPUT] raw GFW response:",
-        raw_output_path
+        f"[OUTPUT] raw GFW response: "
+        f"{raw_path}"
     )
 
     # --------------------------------------------------------
-    # Parse AIS
+    # Parse AIS.
     # --------------------------------------------------------
 
     ais_rows = parse_gfw_rows(
-        report_response
-    )
-
-    print(
-        "[GFW] raw vessel rows:",
-        len(
-            rows_from_gfw(
-                report_response
-            )
-        )
-    )
-
-    print(
-        "[GFW] normalized AIS rows:",
-        len(ais_rows)
-    )
-
-    if not ais_rows:
-        raise RuntimeError(
-            "GFW returned zero usable AIS rows."
-        )
-
-    ais_index = build_ais_index(
-        ais_rows
-    )
-
-    print(
-        "[GFW] unique MMSIs:",
-        len(ais_index)
+        raw_report
     )
 
     # --------------------------------------------------------
-    # Score vessels
+    # Score.
     # --------------------------------------------------------
 
-    print()
-    print(
-        "[SCORING] scoring MMSIs..."
-    )
-
-    candidates = []
-
-    for mmsi, vessel_rows in ais_index.items():
-
-        result = score_vessel(
-            mmsi,
-            vessel_rows,
-            hypotheses
-        )
-
-        if result is None:
-            continue
-
-        candidates.append(
-            result
-        )
-
-    candidates.sort(
-        key=lambda x:
-            x.get("score", 0.0),
-        reverse=True
-    )
-
-    print(
-        "[SCORING] candidates:",
-        len(candidates)
+    candidates = score_vessels(
+        ais_rows=ais_rows,
+        source_probability=(
+            source_probability
+        ),
+        sigma_km=sigma_km,
     )
 
     # --------------------------------------------------------
-    # Resolve vessel identities
+    # Minimum score filtering.
     # --------------------------------------------------------
 
-    candidates = enrich_candidates(
-        candidates
+    candidates = [
+        candidate
+        for candidate in candidates
+        if candidate[
+            "final_score"
+        ] >= min_match_score
+    ]
+
+    # --------------------------------------------------------
+    # Limit top matches stored per vessel.
+    # --------------------------------------------------------
+
+    for candidate in candidates:
+
+        candidate[
+            "top_matches"
+        ] = candidate[
+            "top_matches"
+        ][:top_matches_per_vessel]
+
+    # Re-rank after filtering.
+    for rank, candidate in enumerate(
+        candidates,
+        start=1,
+    ):
+
+        candidate[
+            "rank"
+        ] = rank
+
+    # --------------------------------------------------------
+    # Build final output.
+    # --------------------------------------------------------
+
+    result = build_output(
+        handoff=handoff,
+        source_probability=(
+            source_probability
+        ),
+        ais_rows=ais_rows,
+        candidates=candidates,
+        aoi=aoi,
+        aoi_source=aoi_source,
+        ais_start=ais_start,
+        ais_end=ais_end,
+        time_source=time_source,
+        config=config,
     )
 
     # --------------------------------------------------------
-    # Final output
+    # Save attribution.
     # --------------------------------------------------------
 
-    final_output = {
-        "schema_version":
-            "1.1",
-
-        "event_id":
-            event_id,
-
-        "generated_at_utc":
-            iso_utc(
-                utc_now()
-            ),
-
-        "method": {
-            "stage_1":
-                "Satellite oil-spill detection",
-
-            "stage_2":
-                "OpenDrift/OpenOil deterministic "
-                "backward Lagrangian tracking",
-
-            "stage_3":
-                "Global Fishing Watch AIS-derived "
-                "vessel presence attribution",
-
-            "gfw_presence_dataset":
-                "public-global-presence:latest",
-
-            "gfw_vessel_identity_dataset":
-                GFW_VESSEL_DATASET,
-
-            "spatial_resolution":
-                GFW_SPATIAL_RESOLUTION,
-
-            "temporal_resolution":
-                GFW_TEMPORAL_RESOLUTION,
-
-            "group_by":
-                GFW_GROUP_BY,
-
-            "match_sigma_km":
-                MATCH_SIGMA_KM,
-
-            "scoring":
-                "Probability-weighted spatial "
-                "compatibility + temporal coverage "
-                "+ consecutive compatibility "
-                "+ trajectory consistency "
-                "+ modest vessel-type prior",
-        },
-
-        "inputs": {
-            "stage2_handoff":
-                str(handoff_path),
-
-            "observation_summary":
-                str(summary_path)
-                if summary_path.exists()
-                else None,
-        },
-
-        "ais_query": {
-            "bbox_wsen": [
-                west,
-                south,
-                east,
-                north,
-            ],
-
-            "time_start_utc":
-                iso_utc(start_dt),
-
-            "time_end_utc":
-                iso_utc(end_dt),
-
-            "aoi_source":
-                aoi_source,
-
-            "time_source":
-                time_source,
-        },
-
-        "stage2_probability_field": [
-            {
-                "time_utc":
-                    iso_utc(
-                        h["time_utc"]
-                    ),
-
-                "hours_before_observation":
-                    h[
-                        "hours_before_observation"
-                    ],
-
-                "probability_mass":
-                    h[
-                        "probability_mass"
-                    ],
-
-                "cell_count":
-                    len(
-                        h["cells"]
-                    ),
-
-                "cells":
-                    h["cells"],
-            }
-
-            for h in hypotheses
-        ],
-
-        "ais_observation_count":
-            len(ais_rows),
-
-        "unique_mmsi_count":
-            len(ais_index),
-
-        "vessel_identity_lookup_top_n":
-            VESSEL_IDENTITY_TOP_N,
-
-        "candidates":
-            candidates,
-    }
-
-    attribution_output_path = (
+    result_path = (
         output_dir
         / f"{event_id}_ais_attribution.json"
     )
 
     write_json(
-        attribution_output_path,
-        final_output
+        result_path,
+        result,
     )
 
-    print()
     print(
-        "[OUTPUT] attribution:",
-        attribution_output_path
+        f"[OUTPUT] attribution: "
+        f"{result_path}"
     )
 
     # --------------------------------------------------------
-    # Console summary
+    # Console ranking.
     # --------------------------------------------------------
 
     print()
-    print("=" * 72)
-    print("TOP AIS CANDIDATES")
-    print("=" * 72)
 
-    for i, candidate in enumerate(
-        candidates[:20],
-        start=1
-    ):
+    print(
+        "=" * 72
+    )
 
-        identity = candidate.get(
-            "vessel_identity",
-            {}
-        )
+    print(
+        "TOP AIS CANDIDATES"
+    )
 
-        name = identity.get(
-            "shipname"
-        )
+    print(
+        "=" * 72
+    )
 
-        imo = identity.get(
-            "imo"
-        )
-
-        flag = identity.get(
-            "flag"
-        )
-
-        shiptype = identity.get(
-            "shiptype"
-        )
-
-        score = candidate.get(
-            "score",
-            0.0
-        )
-
-        coverage = (
-            candidate.get(
-                "temporal_coverage",
-                0.0
-            )
-            * 100
-        )
+    if not candidates:
 
         print(
-            f"#{i:2d} "
-            f"MMSI={candidate['mmsi']} "
-            f"name={name} "
-            f"IMO={imo} "
-            f"flag={flag} "
-            f"type={shiptype} "
-            f"score={score:.6f} "
-            f"coverage={coverage:.1f}%"
+            "No matching vessels found."
         )
 
-    print()
-    print(
-        "Done."
-    )
+        return
 
+    for candidate in candidates[:20]:
+
+        print(
+            f"#{candidate['rank']:>2} "
+            f"MMSI={candidate.get('mmsi')} "
+            f"name={candidate.get('vessel_name')} "
+            f"type={candidate.get('vessel_type')} "
+            f"score="
+            f"{candidate['final_score']:.6f} "
+            f"coverage="
+            f"{candidate['temporal_coverage_fraction']:.1%}"
+        )
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
-    main()
+
+    try:
+
+        main()
+
+    except KeyboardInterrupt:
+
+        print(
+            "\nInterrupted."
+        )
+
+        sys.exit(130)
+
+    except Exception as e:
+
+        print(
+            f"\nERROR: {e}"
+        )
+
+        sys.exit(1)
