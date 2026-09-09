@@ -1,0 +1,36 @@
+{
+  "spill_events": {
+    "sanchi_2018": {
+      "description": "MT Sanchi tanker collision (6 Jan 2018) and sinking (14 Jan 2018), East China Sea. Confirmed oil/condensate slicks reported by China's State Oceanic Administration and tracked via VIIRS/Sentinel-2 through mid-to-late January 2018, centered near 28.37N 125.92E.",
+      "bbox": [
+        124.5,
+        27.5,
+        127.0,
+        29.0
+      ],
+      "datetime": "2018-01-14T00:00:00Z/2018-01-25T23:59:59Z"
+    },
+    "novorossiysk_2024": {
+      "description": "Caspian Pipeline Consortium (CPC) marine terminal, Black Sea, near Novorossiysk, Russia -- loading-hose rupture during tanker loading on 29 August 2024. Independently confirmed via direct Sentinel satellite image analysis (Greenpeace): ~50 sq km slick on 29 Aug, growing to ~80 sq km on 30 Aug, drifting from the terminal into open Black Sea water, contained west of Anapa. Good control properties: simple single coastline (no archipelago/island clusters), moderate slick size, recent enough for solid CDSE archive coverage.",
+      "bbox": [
+        37.3,
+        44.5,
+        38.0,
+        44.85
+      ],
+      "datetime": "2024-08-29T00:00:00Z/2024-09-05T23:59:59Z"
+    }
+  },
+  "control_scenes": {
+    "bay_of_biscay_control": {
+      "description": "Open-water control scene, central Bay of Biscay -- roughly 150-250km offshore from both the French and Spanish coasts. NOT a known spill location; a clean baseline to check whether elongated false-positive regions still occur far from any coastline.",
+      "bbox": [
+        -6.0,
+        44.5,
+        -4.0,
+        46.0
+      ],
+      "datetime": "2018-01-01T00:00:00Z/2018-01-31T23:59:59Z"
+    }
+  }
+}

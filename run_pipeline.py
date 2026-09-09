@@ -19,8 +19,8 @@ Usage:
 import argparse
 import json
 
-import Model.oilspill_service as svc
-from fetch_s1 import KNOWN_OIL_SPILL_EVENTS, CONTROL_TEST_LOCATIONS
+import oilspill_service as svc
+from fetch_s1 import get_known_events, get_control_scenes
 
 
 def main():
@@ -34,8 +34,8 @@ def main():
                          help="e.g. 2018-01-10T00:00:00Z/2018-01-10T23:59:59Z")
     parser.add_argument("--event", default=None,
                          help=f"Fetch a known real oil spill event OR a control scene instead of "
-                              f"--bbox/--datetime. Events: {list(KNOWN_OIL_SPILL_EVENTS.keys())}. "
-                              f"Controls: {list(CONTROL_TEST_LOCATIONS.keys())}")
+                              f"--bbox/--datetime. Events: {list(get_known_events().keys())}. "
+                              f"Controls: {list(get_control_scenes().keys())}")
     parser.add_argument("--list", action="store_true",
                          help="With --event, just list available passes and exit (no download/inference)")
     parser.add_argument("--pick", type=int, default=0,
