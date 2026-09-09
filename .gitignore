@@ -11,9 +11,13 @@
 **/.env
 **/.env.*
 
+# Output folders starting with "out"
+**/out*/
+
 # Python caches/tools
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
-**/out*/
+**/stage2_outputs/
+
