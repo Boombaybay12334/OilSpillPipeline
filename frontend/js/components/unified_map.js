@@ -101,6 +101,8 @@ async function initMap(event, s1, s2, s3) {
   const mapEl = document.getElementById('leaflet-map');
   if (!mapEl || !window.L) return;
 
+  const cartoBasemapApiKey = 'cb1_340y_1_2d3bb68514b4669eaeac8975';
+
   if (mapInstance) {
     mapInstance.remove();
     mapInstance = null;
@@ -120,7 +122,7 @@ async function initMap(event, s1, s2, s3) {
   window.L.control.zoom({ position: 'topleft' }).addTo(mapInstance);
 
   // Dark nautical cartography tiles (CartoDB Dark Matter / OSM Dark)
-  window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  window.L.tileLayer(`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cartoBasemapApiKey)}`, {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap',
     subdomains: 'abcd',
     maxZoom: 18,
