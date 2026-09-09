@@ -1,0 +1,16 @@
+rules:
+  - match: "*prob*mask*.tif"
+    category: raster_source
+    role: probability_mask
+    renderer: probability_colormap
+    priority: 100
+  - match: "*segment*.tif"
+    category: raster_source
+    role: segmentation_mask
+    renderer: categorical_mask
+    priority: 90
+  - match: "*vv*.tif"
+    category: raster_source
+    role: sar_backscatter
+    renderer: sar_grayscale
+    priority: 80

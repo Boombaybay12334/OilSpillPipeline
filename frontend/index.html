@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Oil Spill Investigation Pipeline</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div><span class="eyebrow">OFFLINE-FIRST WORKBENCH</span><h1>Oil Spill Investigation Pipeline</h1></div><button id="new-event">Start New Surveillance</button></header>
+  <main>
+    <aside><h2>Investigations</h2><div id="events" class="event-list"></div></aside>
+    <section id="workspace"><div class="empty"><span class="mark">OS</span><h2>Select an investigation</h2><p>Create an event or choose a saved replay from the left.</p></div></section>
+  </main>
+  <dialog id="create-dialog"><form method="dialog" id="create-form"><h2>New surveillance</h2><label>Event name<input name="name" required placeholder="North Sea survey"></label><label>Mode<select name="mode"><option>offline</option><option>online</option><option>replay</option></select></label><div class="actions"><button value="cancel" class="quiet">Cancel</button><button value="default">Create event</button></div></form></dialog>
+  <script src="app.js"></script>
+</body>
+</html>

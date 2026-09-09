@@ -6,6 +6,7 @@
 **/.venv/
 **/venv/
 **/env/
+.venv-platform/
 
 # Environment files
 **/.env
@@ -20,4 +21,8 @@
 .ruff_cache/
 *.egg-info/
 **/stage2_outputs/
+
+# Investigation platform data and frontend/tool caches
+data/
+node_modules/
 

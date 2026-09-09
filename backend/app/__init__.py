@@ -1,0 +1,1 @@
+"""Offline-first oil spill investigation application."""
