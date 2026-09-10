@@ -10,6 +10,7 @@
       ],
       "datetime": "2018-01-14T00:00:00Z/2018-01-25T23:59:59Z"
     },
+
     "novorossiysk_2024": {
       "description": "Caspian Pipeline Consortium (CPC) marine terminal, Black Sea, near Novorossiysk, Russia -- loading-hose rupture during tanker loading on 29 August 2024. Independently confirmed via direct Sentinel satellite image analysis (Greenpeace): ~50 sq km slick on 29 Aug, growing to ~80 sq km on 30 Aug, drifting from the terminal into open Black Sea water, contained west of Anapa. Good control properties: simple single coastline (no archipelago/island clusters), moderate slick size, recent enough for solid CDSE archive coverage.",
       "bbox": [
@@ -19,8 +20,20 @@
         44.85
       ],
       "datetime": "2024-08-29T00:00:00Z/2024-09-05T23:59:59Z"
+    },
+
+    "grande_america_2019": {
+      "description": "Grande America container ship sinking and resulting oil spill in the North Atlantic, approximately 300 km off the French coast. Sentinel-1 captured the spill on 19 March 2019, showing an approximately 50 km-long slick in open ocean.",
+      "bbox": [
+        -6.5,
+        45.0,
+        -4.0,
+        47.0
+      ],
+      "datetime": "2019-03-18T00:00:00Z/2019-03-22T23:59:59Z"
     }
   },
+
   "control_scenes": {
     "bay_of_biscay_control": {
       "description": "Open-water control scene, central Bay of Biscay -- roughly 150-250km offshore from both the French and Spanish coasts. NOT a known spill location; a clean baseline to check whether elongated false-positive regions still occur far from any coastline.",
