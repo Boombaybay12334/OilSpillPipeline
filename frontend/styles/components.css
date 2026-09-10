@@ -330,8 +330,55 @@
 }
 
 /* --------------------------------------------------------------------------
-   Timeline Scrubber (Stage 2)
+   Backtracking Visualization (Stage 2)
    -------------------------------------------------------------------------- */
+.backtracking-visualization {
+  overflow: hidden;
+}
+
+.backtracking-map {
+  height: 430px;
+  min-height: 320px;
+  background: var(--bg-void);
+}
+
+.backtracking-map-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font: 0.68rem var(--font-mono);
+  text-transform: uppercase;
+}
+
+.backtracking-map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-line,
+.legend-dot,
+.legend-box {
+  display: inline-block;
+  width: 12px;
+  height: 8px;
+}
+
+.legend-line { border-top: 2px dashed var(--cyan-accent); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan-accent); }
+.legend-box { border: 1px dashed var(--amber-warn); }
+
+.backtracking-map-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  border-top: 1px solid var(--border-hairline);
+}
+
 .timeline-scrubber {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);

@@ -3,11 +3,13 @@
  */
 import { store } from '../state.js';
 import { Api } from '../api.js';
+import { getInvestigationPaths } from '../path_settings.js';
 import { openImageryModal } from './imagery_viewer.js';
 
 export function renderStage1(container) {
   const state = store.getState();
   const event = state.currentEvent;
+  const paths = event ? getInvestigationPaths(event.event_id) : getInvestigationPaths('');
   const summary = state.stageSummaries.stage1;
   const artifacts = (event?.manifest?.artifacts || []).filter(a => a.stage === 'stage1' && !isIgnored(a.relative_path));
 
@@ -170,7 +172,7 @@ export function renderStage1(container) {
             Enter a local directory containing generated Stage 1 files (e.g., <code>detection_report.json</code>, <code>oil_regions.geojson</code>, <code>sigma0_vv_vh.tif</code>, <code>oil_mask_prob.tif</code>). Files are copied safely into the investigation sandbox.
           </p>
           <div style="display:flex; gap:var(--space-2);">
-            <input id="stage1-import-path" type="text" class="font-mono" placeholder="C:\\Users\\abhin\\Desktop\\OilSpillPipeline\\Model\\outfinal" value="C:\\Users\\abhin\\Desktop\\OilSpillPipeline\\Model\\outfinal">
+            <input id="stage1-import-path" type="text" class="font-mono" placeholder="${escapeHtml(paths.stage1)}" value="${escapeHtml(paths.stage1)}">
             <button id="btn-stage1-import" class="btn-primary">Import Folder</button>
           </div>
         </div>

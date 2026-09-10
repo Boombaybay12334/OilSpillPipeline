@@ -3,10 +3,14 @@
  */
 import { store } from '../state.js';
 import { Api } from '../api.js';
+import { getInvestigationPaths } from '../path_settings.js';
+
+let backtrackingMap = null;
 
 export function renderStage2(container) {
   const state = store.getState();
   const event = state.currentEvent;
+  const paths = event ? getInvestigationPaths(event.event_id) : getInvestigationPaths('');
   const summary = state.stageSummaries.stage2;
 
   if (!event) {
@@ -20,9 +24,6 @@ export function renderStage2(container) {
   const hypotheses = summary?.origin_hypotheses || [];
   const topCells = summary?.top_cells || [];
   const limitations = summary?.limitations || [];
-
-  const scrubberIdx = Math.min(state.scrubberIndex || 0, Math.max(0, hypotheses.length - 1));
-  const currentHypo = hypotheses[scrubberIdx] || hypotheses[0] || null;
 
   container.innerHTML = `
     <div class="page-container">
@@ -56,29 +57,27 @@ export function renderStage2(container) {
         </div>
       ` : ''}
 
-      <!-- Interactive Temporal Hypotheses Scrubber -->
+      <!-- Temporal Origin Reconstruction -->
       ${hypotheses.length > 0 ? `
-        <div class="timeline-scrubber">
-          <div class="scrubber-header">
+        <div class="backtracking-visualization panel">
+          <div class="panel-header">
             <div>
-              <span class="page-eyebrow">TEMPORAL DRIFT RECONSTRUCTION</span>
-              <h3 style="margin-top:2px;">Origin Hypothesis at Step: ${currentHypo ? `${currentHypo.hours_before_observation}h before observation` : 'T_obs'}</h3>
+              <h3>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-9"/><circle cx="3" cy="17" r="2"/><circle cx="9" cy="11" r="2"/><circle cx="13" cy="15" r="2"/><circle cx="21" cy="6" r="2"/></svg>
+                <span>Backtracked Origin Drift</span>
+              </h3>
+              <span class="page-eyebrow">${hypotheses.length} MODELED TIMESTEPS · PATH OF MOST PROBABLE CELLS</span>
             </div>
-            <div class="scrubber-time-badge font-mono">
-              ${currentHypo?.time_utc ? new Date(currentHypo.time_utc).toUTCString() : 'N/A'}
+            <div class="backtracking-map-legend">
+              <span><i class="legend-line"></i> probable drift path</span>
+              <span><i class="legend-dot"></i> timestep</span>
+              <span><i class="legend-box"></i> 90% envelope</span>
             </div>
           </div>
-
-          <div class="scrubber-slider-wrap">
-            <button id="btn-scrub-prev" class="btn-secondary btn-sm" ${scrubberIdx === 0 ? 'disabled' : ''}>← Step Forward</button>
-            <input id="hypo-slider" type="range" class="scrubber-slider" min="0" max="${hypotheses.length - 1}" value="${scrubberIdx}">
-            <button id="btn-scrub-next" class="btn-secondary btn-sm" ${scrubberIdx === hypotheses.length - 1 ? 'disabled' : ''}>Step Back →</button>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono);">
-            <span>Observation ($T_{obs}$)</span>
-            <span>Active Particles: ${currentHypo?.active_particles?.toLocaleString() || '8,526'}</span>
-            <span>Maximum Backtrack ($T - ${bt.backtrack_hours || 69}h$)</span>
+          <div id="stage2-backtracking-map" class="backtracking-map"></div>
+          <div class="backtracking-map-caption">
+            <span>Each marker is the highest-probability cell at a saved timestep. Marker size reflects active particles.</span>
+            <span class="font-mono">${formatHours(hypotheses[0]?.hours_before_observation)} to ${formatHours(hypotheses[hypotheses.length - 1]?.hours_before_observation)} before T_obs</span>
           </div>
         </div>
       ` : ''}
@@ -216,7 +215,7 @@ export function renderStage2(container) {
             Enter a local directory containing generated Stage 2 handoff files (e.g. <code>sanchi_2018_stage2_handoff.json</code>, <code>sanchi_2018_source_probability.geojson</code>).
           </p>
           <div style="display:flex; gap:var(--space-2);">
-            <input id="stage2-import-path" type="text" class="font-mono" placeholder="C:\\Users\\abhin\\Desktop\\OilSpillPipeline\\BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw" value="C:\\Users\\abhin\\Desktop\\OilSpillPipeline\\BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw">
+            <input id="stage2-import-path" type="text" class="font-mono" placeholder="${escapeHtml(paths.stage2)}" value="${escapeHtml(paths.stage2)}">
             <button id="btn-stage2-import" class="btn-primary">Import Stage 2 Handoff</button>
           </div>
         </div>
@@ -224,26 +223,8 @@ export function renderStage2(container) {
     </div>
   `;
 
-  // Bind slider & step buttons
-  const slider = container.querySelector('#hypo-slider');
-  if (slider) {
-    slider.oninput = (e) => {
-      store.setScrubberIndex(parseInt(e.target.value, 10));
-    };
-  }
-
-  const prevBtn = container.querySelector('#btn-scrub-prev');
-  if (prevBtn) {
-    prevBtn.onclick = () => {
-      if (scrubberIdx > 0) store.setScrubberIndex(scrubberIdx - 1);
-    };
-  }
-
-  const nextBtn = container.querySelector('#btn-scrub-next');
-  if (nextBtn) {
-    nextBtn.onclick = () => {
-      if (scrubberIdx < hypotheses.length - 1) store.setScrubberIndex(scrubberIdx + 1);
-    };
+  if (hypotheses.length > 0) {
+    setTimeout(() => renderBacktrackingMap(hypotheses), 50);
   }
 
   // Bind Stage 2 Import
@@ -274,4 +255,84 @@ export function renderStage2(container) {
 
 function escapeHtml(str) {
   return String(str || '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
+}
+
+function formatHours(hours) {
+  return Number.isFinite(Number(hours)) ? `${Number(hours).toFixed(0)}h` : 'N/A';
+}
+
+function renderBacktrackingMap(hypotheses) {
+  const mapEl = document.getElementById('stage2-backtracking-map');
+  if (!mapEl || !window.L) return;
+
+  if (backtrackingMap) {
+    backtrackingMap.remove();
+    backtrackingMap = null;
+  }
+
+  const points = hypotheses.map((hypothesis, index) => {
+    const cell = hypothesis.top_cells?.[0];
+    if (!cell || !Number.isFinite(Number(cell.lat_center)) || !Number.isFinite(Number(cell.lon_center))) return null;
+    return {
+      index,
+      lat: Number(cell.lat_center),
+      lon: Number(cell.lon_center),
+      probability: Number(cell.probability || 0),
+      particles: Number(hypothesis.active_particles || 0),
+      hours: hypothesis.hours_before_observation,
+      time: hypothesis.time_utc,
+    };
+  }).filter(Boolean);
+
+  if (!points.length) return;
+
+  backtrackingMap = window.L.map(mapEl, { zoomControl: true, attributionControl: true });
+  window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap',
+    subdomains: 'abcd',
+    maxZoom: 18,
+  }).addTo(backtrackingMap);
+
+  const path = points.map(point => [point.lat, point.lon]);
+  window.L.polyline(path, { color: '#00e5c9', weight: 2, opacity: 0.75, dashArray: '5, 7' }).addTo(backtrackingMap);
+
+  points.forEach((point, index) => {
+    const radius = Math.max(5, Math.min(14, 5 + Math.sqrt(point.particles / 100)));
+    window.L.circleMarker([point.lat, point.lon], {
+      radius,
+      color: index === 0 ? '#f59e0b' : '#00e5c9',
+      weight: index === 0 ? 2 : 1,
+      fillColor: index === 0 ? '#f59e0b' : '#00e5c9',
+      fillOpacity: 0.75,
+    }).bindPopup(`
+      <div class="map-popup-header">${index === 0 ? 'EARLIEST MODELED ORIGIN' : 'BACKTRACK TIMESTEP'}</div>
+      <div class="map-popup-grid">
+        <span>Time:</span><span>${point.time ? new Date(point.time).toUTCString() : 'N/A'}</span>
+        <span>Before T_obs:</span><span>${formatHours(point.hours)}</span>
+        <span>Probability:</span><span>${(point.probability * 100).toFixed(2)}%</span>
+        <span>Active particles:</span><span>${point.particles.toLocaleString()}</span>
+      </div>
+    `).addTo(backtrackingMap);
+  });
+
+  const envelope = hypotheses.reduce((widest, hypothesis) => {
+    const coverage = hypothesis.coverage_thresholds?.find(item => Number(item.threshold) === 0.9);
+    if (!coverage?.bbox_wsen || coverage.bbox_wsen.length !== 4) return widest;
+    const [west, south, east, north] = coverage.bbox_wsen.map(Number);
+    const area = Math.abs((east - west) * (north - south));
+    return !widest || area > widest.area ? { bounds: [[south, west], [north, east]], area } : widest;
+  }, null);
+
+  const bounds = window.L.latLngBounds(points.map(point => [point.lat, point.lon]));
+  if (envelope) {
+    window.L.rectangle(envelope.bounds, {
+      color: '#f59e0b',
+      weight: 1,
+      dashArray: '4, 5',
+      fillColor: '#f59e0b',
+      fillOpacity: 0.06,
+    }).bindTooltip('Widest 90% probability envelope').addTo(backtrackingMap);
+    bounds.extend(envelope.bounds);
+  }
+  backtrackingMap.fitBounds(bounds, { padding: [24, 24] });
 }

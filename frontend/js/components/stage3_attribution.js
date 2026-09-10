@@ -3,10 +3,12 @@
  */
 import { store } from '../state.js';
 import { Api } from '../api.js';
+import { getInvestigationPaths } from '../path_settings.js';
 
 export function renderStage3(container) {
   const state = store.getState();
   const event = state.currentEvent;
+  const paths = event ? getInvestigationPaths(event.event_id) : getInvestigationPaths('');
   const summary = state.stageSummaries.stage3;
 
   if (!event) {
@@ -249,7 +251,7 @@ export function renderStage3(container) {
             Enter a local directory containing generated Stage 3 attribution files (e.g. <code>sanchi_2018_final_ships.json</code>, <code>sanchi_2018_ais_attribution.json</code>).
           </p>
           <div style="display:flex; gap:var(--space-2);">
-            <input id="stage3-import-path" type="text" class="font-mono" placeholder="C:\\Users\\abhin\\Desktop\\OilSpillPipeline\\BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw\\ais_attribution_output" value="C:\\Users\\abhin\\Desktop\\OilSpillPipeline\\BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw\\ais_attribution_output">
+            <input id="stage3-import-path" type="text" class="font-mono" placeholder="${escapeHtml(paths.stage3)}" value="${escapeHtml(paths.stage3)}">
             <button id="btn-stage3-import" class="btn-primary">Import Stage 3 Ranking</button>
           </div>
         </div>

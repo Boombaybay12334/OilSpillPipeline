@@ -3,6 +3,7 @@
  */
 import { store } from '../state.js';
 import { Api } from '../api.js';
+import { getInvestigationPaths, saveInvestigationPaths } from '../path_settings.js';
 
 export function renderConfig(container) {
   const state = store.getState();
@@ -12,6 +13,8 @@ export function renderConfig(container) {
     container.innerHTML = '<div class="empty-state"><h3>Select an investigation first</h3></div>';
     return;
   }
+
+  const paths = getInvestigationPaths(event.event_id);
 
   container.innerHTML = `
     <div class="page-container">
@@ -67,17 +70,19 @@ export function renderConfig(container) {
           <div class="dossier-grid">
             <div class="dossier-item">
               <span class="dossier-key">Stage 1 SAR Detection Outputs</span>
-              <span class="dossier-val font-mono">Model\\outfinal</span>
+              <input id="stage1-default-path" class="font-mono" type="text" value="${escapeHtml(paths.stage1)}">
             </div>
             <div class="dossier-item">
               <span class="dossier-key">Stage 2 Backtracking Handoff</span>
-              <span class="dossier-val font-mono">BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw</span>
+              <input id="stage2-default-path" class="font-mono" type="text" value="${escapeHtml(paths.stage2)}">
             </div>
             <div class="dossier-item">
               <span class="dossier-key">Stage 3 AIS Ranking Outputs</span>
-              <span class="dossier-val font-mono">BacktrackModel\\ais_attribution_gfw\\ais_attribution_gfw\\ais_attribution_output</span>
+              <input id="stage3-default-path" class="font-mono" type="text" value="${escapeHtml(paths.stage3)}">
             </div>
           </div>
+          <button id="btn-save-paths" class="btn-primary">Save Input Paths</button>
+          <span id="paths-save-status" style="margin-left:var(--space-2); color:var(--text-muted);"></span>
         </div>
       </div>
 
@@ -100,6 +105,18 @@ export function renderConfig(container) {
       </div>
     </div>
   `;
+
+  const savePathsBtn = container.querySelector('#btn-save-paths');
+  if (savePathsBtn) {
+    savePathsBtn.onclick = () => {
+      saveInvestigationPaths(event.event_id, {
+        stage1: container.querySelector('#stage1-default-path').value,
+        stage2: container.querySelector('#stage2-default-path').value,
+        stage3: container.querySelector('#stage3-default-path').value,
+      });
+      container.querySelector('#paths-save-status').textContent = 'Saved for this investigation';
+    };
+  }
 
   // Bind Delete
   const deleteBtn = container.querySelector('#btn-delete-event');
