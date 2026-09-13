@@ -84,10 +84,10 @@ REPORT_DIR = STAGE2_EVENT_DIR / "reports"
 # For a NEW event, start with 48-72 then run inspect_environmental_data.py.
 # If it says current coverage is insufficient, either shrink this number OR
 # delete that event's cached currents .nc file and let the fetcher re-download.
-BACKTRACK_HOURS = 69
+BACKTRACK_HOURS = 17
 
 # Used ONLY when downloading currents/winds, never as extra model runtime.
-TIME_PADDING_HOURS = 12
+TIME_PADDING_HOURS = 24
 
 # Extra geographic margin around all observed slick polygons when fetching
 # currents/winds. Increase for longer/faster open-ocean scenarios.

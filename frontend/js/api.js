@@ -99,6 +99,16 @@ export const Api = {
     return request(`/investigations/${eventId}/artifacts`);
   },
 
+  async getArtifact(eventId, artifactId) {
+    const response = await fetch(this.getArtifactUrl(eventId, artifactId), {
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`Artifact request failed (${response.status})`);
+    }
+    return response.json();
+  },
+
   async getArtifactMetadata(eventId, artifactId) {
     return request(`/investigations/${eventId}/artifacts/${artifactId}/metadata`);
   },

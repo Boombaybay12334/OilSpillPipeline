@@ -237,7 +237,10 @@ async function initMap(event, s1, s2, s3) {
   // 4. Plot Candidate Vessels (Stage 3)
   const candidates = s3?.candidates || [];
   candidates.forEach((ship, idx) => {
-    if (!ship.best_match_lat || !ship.best_match_lon) return;
+    const bestMatch = ship.best_match || {};
+    const latitude = Number(ship.best_match_lat ?? bestMatch.ais_lat);
+    const longitude = Number(ship.best_match_lon ?? bestMatch.ais_lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
 
     const isSelected = store.getState().selectedCandidate?.mmsi === ship.mmsi;
     const markerIcon = window.L.divIcon({
@@ -247,7 +250,7 @@ async function initMap(event, s1, s2, s3) {
       iconAnchor: [11, 11],
     });
 
-    const marker = window.L.marker([ship.best_match_lat, ship.best_match_lon], { icon: markerIcon })
+    const marker = window.L.marker([latitude, longitude], { icon: markerIcon })
       .bindPopup(`
         <div class="map-popup-header">CANDIDATE VESSEL #${ship.rank}</div>
         <div class="map-popup-grid">
