@@ -66,7 +66,7 @@ def resolve_gpt_executable() -> str:
     )
 
 
-GPT_EXECUTABLE = r"C:\Program Files\esa-snap\bin\gpt.exe"  # resolved lazily in main() / run_snap_preprocessing()
+GPT_EXECUTABLE = None # resolved lazily in main() / run_snap_preprocessing()
 
 # Graph path resolution, in priority order:
 #   1. GRAPH_XML_PATH env var, if set -- put the XML anywhere you want.
@@ -401,13 +401,34 @@ def run_inference_on_scene(x_norm: np.ndarray, valid_mask: np.ndarray, classifie
 # =========================
 
 def run_preprocess_and_infer(safe_input: str, output_dir: str, use_cfar: bool = True,
-                              cfar_k: float = 2.5, strip_rows: int = 4096) -> dict:
+                              cfar_k: float = 2.5, strip_rows: int = 4096,
+                              generate_quickview: bool = True) -> dict:
     """
     Full step-2-onward pipeline: SNAP preprocessing -> [STREAMED per
     row-strip: normalize -> CFAR pre-filter (optional) -> tile ->
     classifier/segmentor inference -> write probability window] ->
     extract georeferenced regions -> write detection report (GeoJSON +
     JSON), stamped with scene acquisition time.
+
+    `output_dir` is treated as ONE RUN'S folder (oilspill_service.py hands
+    this a fresh `runs/<run_id>/` directory per call -- see
+    run_registry.py). Everything this function writes is split into two
+    subfolders under it:
+        raw/        sigma0_vv_vh.tif, oil_mask_prob.tif -- the actual
+                    scientific outputs, not directly human-viewable
+        processed/  oil_regions.geojson, detection_report.json, and (if
+                    `generate_quickview`) three PNG quickviews rendered
+                    from the raw/ tifs -- see quickview.py
+
+    `generate_quickview=True` (default) additionally renders PNG
+    quicklooks of the SAR scene, the probability mask, and an SAR+overlay
+    composite into processed/, purely for human eyeballing -- see
+    quickview.py's module docstring for why the raw tifs aren't viewable
+    as-is. This never affects detection results; it's a rendering step
+    that runs strictly after the report/geojson are already written, and
+    a failure in it is logged and swallowed rather than failing the run
+    (a successful detection with a missing PNG preview is still a
+    successful detection).
 
     WHY STREAMING (not a stylistic choice -- this crashed without it):
     A wide-swath EW-mode scene can be ~24000 x 27000 pixels. Loading the
@@ -441,9 +462,13 @@ def run_preprocess_and_infer(safe_input: str, output_dir: str, use_cfar: bool = 
     real slick outside its candidate blobs.
     """
     os.makedirs(output_dir, exist_ok=True)
+    raw_dir = os.path.join(output_dir, "raw")
+    processed_dir = os.path.join(output_dir, "processed")
+    os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs(processed_dir, exist_ok=True)
 
-    sigma0_tif = os.path.join(output_dir, "sigma0_vv_vh.tif")
-    mask_out_tif = os.path.join(output_dir, "oil_mask_prob.tif")
+    sigma0_tif = os.path.join(raw_dir, "sigma0_vv_vh.tif")
+    mask_out_tif = os.path.join(raw_dir, "oil_mask_prob.tif")
 
     run_snap_preprocessing(safe_input, sigma0_tif)
 
@@ -576,24 +601,43 @@ def run_preprocess_and_infer(safe_input: str, output_dir: str, use_cfar: bool = 
     del binary_mask_full
 
     # scene_metadata.json was written by fetch_s1.py as a side-channel file
-    # next to the .SAFE folder. Try to find it there; if this run used
-    # --input pointing at a manually-provided scene with no such file,
-    # fall back to parsing the manifest directly (still gets real
+    # next to the .SAFE folder (inside raw/download/<product>/ -- see
+    # oilspill_service.py). Try to find it there; if this run used
+    # input_safe_path pointing at a manually-provided scene with no such
+    # file, fall back to parsing the manifest directly (still gets real
     # acquisition timing, just without catalog search context).
     metadata_dir = os.path.dirname(os.path.normpath(safe_input))
     meta = scene_metadata.load_scene_metadata(metadata_dir)
     if meta is None:
         print("[SceneMetadata] No scene_metadata.json found next to the SAFE folder "
-              "(expected if --input pointed at a manually-provided scene). "
+              "(expected if input pointed at a manually-provided scene). "
               "Parsing manifest.safe directly for acquisition timing instead.")
         meta = scene_metadata.build_scene_metadata(catalog_item=None, safe_folder=safe_input)
-        scene_metadata.save_scene_metadata(meta, output_dir)
+    # Always leave a copy at the run's root too (not just in raw/download/),
+    # so the run manifest / API layer has one predictable place to find it
+    # regardless of which of the two paths above produced it.
+    scene_metadata.save_scene_metadata(meta, output_dir)
 
     geojson = region_extraction.regions_to_geojson(regions, scene_metadata=meta)
-    geojson_path = os.path.join(output_dir, "oil_regions.geojson")
+    geojson_path = os.path.join(processed_dir, "oil_regions.geojson")
     with open(geojson_path, "w") as f:
         json.dump(geojson, f, indent=2)
     print(f"[Regions] Wrote {geojson_path} ({len(regions)} regions)")
+
+    # --- Quickviews: human-viewable PNG renders of the raw tifs above ---
+    # Rendering convenience only -- never allowed to fail an otherwise-
+    # successful detection run. See quickview.py's module docstring for
+    # why the raw tifs aren't viewable as-is without this step.
+    quickview_paths = {"quickview_sar_png": None, "quickview_mask_png": None,
+                        "quickview_overlay_png": None}
+    if generate_quickview:
+        try:
+            import quickview
+            quickview_paths = quickview.generate_all_quickviews(
+                sigma0_tif, mask_out_tif, processed_dir, threshold=SEG_THRESHOLD)
+            print(f"[Quickview] Wrote {len(quickview_paths)} PNG quickviews to {processed_dir}")
+        except Exception as e:
+            print(f"[Quickview] Skipped (non-fatal): {e}")
 
     report = {
         "scene_metadata": meta,
@@ -608,63 +652,23 @@ def run_preprocess_and_infer(safe_input: str, output_dir: str, use_cfar: bool = 
             "sigma0_tif": sigma0_tif,
             "probability_mask_tif": mask_out_tif,
             "regions_geojson": geojson_path,
+            **quickview_paths,
         },
     }
-    report_path = os.path.join(output_dir, "detection_report.json")
+    report_path = os.path.join(processed_dir, "detection_report.json")
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
     print(f"[Report] Wrote {report_path}")
 
     return {
+        "run_dir": output_dir,
+        "raw_dir": raw_dir,
+        "processed_dir": processed_dir,
+        "sigma0_tif": sigma0_tif,
         "mask_tif": mask_out_tif,
         "regions_geojson": geojson_path,
         "detection_report": report_path,
-    }
-
-    # scene_metadata.json was written by fetch_s1.py as a side-channel file
-    # next to the .SAFE folder. Try to find it there; if this run used
-    # --input pointing at a manually-provided scene with no such file,
-    # fall back to parsing the manifest directly (still gets real
-    # acquisition timing, just without catalog search context).
-    metadata_dir = os.path.dirname(os.path.normpath(safe_input))
-    meta = scene_metadata.load_scene_metadata(metadata_dir)
-    if meta is None:
-        print("[SceneMetadata] No scene_metadata.json found next to the SAFE folder "
-              "(expected if --input pointed at a manually-provided scene). "
-              "Parsing manifest.safe directly for acquisition timing instead.")
-        meta = scene_metadata.build_scene_metadata(catalog_item=None, safe_folder=safe_input)
-        scene_metadata.save_scene_metadata(meta, output_dir)
-
-    geojson = region_extraction.regions_to_geojson(regions, scene_metadata=meta)
-    geojson_path = os.path.join(output_dir, "oil_regions.geojson")
-    with open(geojson_path, "w") as f:
-        json.dump(geojson, f, indent=2)
-    print(f"[Regions] Wrote {geojson_path} ({len(regions)} regions)")
-
-    report = {
-        "scene_metadata": meta,
-        "detection_summary": {
-            "n_regions": len(regions),
-            "total_oil_area_km2": round(sum(r["area_km2"] for r in regions), 4),
-            "cfar_prefilter_used": use_cfar,
-            "cfar_k": cfar_k if use_cfar else None,
-        },
-        "regions": regions,
-        "output_files": {
-            "sigma0_tif": sigma0_tif,
-            "probability_mask_tif": mask_out_tif,
-            "regions_geojson": geojson_path,
-        },
-    }
-    report_path = os.path.join(output_dir, "detection_report.json")
-    with open(report_path, "w") as f:
-        json.dump(report, f, indent=2)
-    print(f"[Report] Wrote {report_path}")
-
-    return {
-        "mask_tif": mask_out_tif,
-        "regions_geojson": geojson_path,
-        "detection_report": report_path,
+        **quickview_paths,
     }
 
 

@@ -129,6 +129,28 @@ def add_event(key: str, bbox: list, datetime_range: str, description: str,
     print(f"[Registry] Added '{key}' to {section} in {EVENTS_REGISTRY_PATH}")
 
 
+def remove_event(key: str) -> bool:
+    """
+    Removes `key` from whichever registry section it's in (spill_events or
+    control_scenes -- checks both, since callers don't need to know which
+    one it was registered under). Returns True if something was actually
+    removed, False if `key` wasn't found in either section -- deliberately
+    NOT an error, so DELETE /events/{key} at the API layer can be
+    idempotent (calling it twice isn't a failure the second time).
+    """
+    data = _load_registry()
+    removed = False
+    for section in ("spill_events", "control_scenes"):
+        if key in data[section]:
+            del data[section][key]
+            removed = True
+    if removed:
+        with open(EVENTS_REGISTRY_PATH, "w") as f:
+            _json.dump(data, f, indent=2)
+        print(f"[Registry] Removed '{key}' from {EVENTS_REGISTRY_PATH}")
+    return removed
+
+
 def _resolve_scene_config(key: str):
     """Looks up `key` in either registry section, spill events first."""
     data = _load_registry()

@@ -33,6 +33,15 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ============================================================
+# Default data root -- where the API server organizes run output when a
+# request doesn't specify its own output_dir (see oilspill_service.detect
+# and run_registry.py for the runs/<run_id>/raw|processed layout written
+# under here). Override with the OILSPILL_DATA_DIR env var, e.g. to point
+# it at a mounted volume in a container.
+# ============================================================
+DATA_DIR = os.environ.get("OILSPILL_DATA_DIR", os.path.join(BASE_DIR, "data"))
+
+# ============================================================
 # REQUIRED AT INFERENCE -- checkpoint + norm stats paths
 # ============================================================
 CLASSIFIER_CKPT = os.path.join(BASE_DIR, "classifier_best.pt")

@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import json
+import os
 
 import oilspill_service as svc
 from fetch_s1 import get_known_events, get_control_scenes
@@ -25,7 +26,9 @@ from fetch_s1 import get_known_events, get_control_scenes
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--output_dir", default=None,
+                         help="Base directory runs/<run_id>/ is created under. "
+                              "Defaults to config.DATA_DIR (./data, or $OILSPILL_DATA_DIR) if omitted.")
     parser.add_argument("--input", default=None,
                          help="Skip fetching and use an existing .SAFE folder or .zip")
     parser.add_argument("--bbox", nargs=4, type=float, default=None,
@@ -46,6 +49,10 @@ def main():
                          help="CFAR sensitivity multiplier (2.0-3.0 typical). Lower = more candidates.")
     parser.add_argument("--strip_rows", type=int, default=4096,
                          help="Rows processed per streaming strip (lower = less peak memory, slower).")
+    parser.add_argument("--run_label", default=None,
+                         help="Human-friendly prefix for the generated run_id. Defaults to --event, or 'custom'.")
+    parser.add_argument("--no_quickview", action="store_true",
+                         help="Skip rendering the PNG quickviews (sar/mask/overlay) -- geojson/report still written.")
     parser.add_argument("--json", action="store_true",
                          help="Print the full DetectionResult as JSON instead of a human summary "
                               "(useful when this CLI is itself called from another script).")
@@ -68,6 +75,8 @@ def main():
         use_cfar=not args.no_cfar,
         cfar_k=args.cfar_k,
         strip_rows=args.strip_rows,
+        run_label=args.run_label,
+        generate_quickview=not args.no_quickview,
     )
 
     result = svc.detect(request)
@@ -77,15 +86,21 @@ def main():
         return
 
     if not result.success:
-        print(f"\n=== FAILED ===\n{result.error}")
+        print(f"\n=== FAILED (run_id={result.run_id}) ===\n{result.error}")
+        if result.run_dir:
+            print(f"Partial run folder (manifest.json records the failure): {result.run_dir}")
         raise SystemExit(1)
 
     print(f"\n=== DONE ===")
+    print(f"Run ID:              {result.run_id}")
+    print(f"Run folder:          {result.run_dir}")
     print(f"Regions detected:    {result.n_regions}")
     print(f"Total oil area:      {result.total_oil_area_km2} km^2")
-    print(f"Probability mask:    {result.probability_mask_tif}")
-    print(f"Regions (GeoJSON):   {result.regions_geojson}")
+    print(f"Regions (GeoJSON):   {result.regions_geojson}   <- the final answer")
     print(f"Full report (JSON):  {result.detection_report_json}")
+    print(f"Probability mask:    {result.probability_mask_tif}   (raw, not directly viewable)")
+    if result.files.get("processed", {}).get("quickview_overlay_png"):
+        print(f"Overlay quickview:   {os.path.join(result.run_dir, result.files['processed']['quickview_overlay_png'])}")
 
 
 if __name__ == "__main__":
