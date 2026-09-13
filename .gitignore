@@ -1,0 +1,37 @@
+# Virtual environments
+venv*/
+*venv*/
+env*/
+*env*/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Output folders
+out*/
+*output*/
+
+# Data folders
+data/
+*data*/
+
+# Environment variables / secrets
+.env
+.env.*
+
+# IDE
+.vscode/
+
+# Other generated stuff
+.cache/
+temp/
+tmp/
+logs/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
